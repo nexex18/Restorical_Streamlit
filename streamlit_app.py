@@ -351,7 +351,7 @@ def overview_table(where_sql: str, params: list):
 
         # Add per-row Process link for sites with Final Score == 0
         api_base = os.environ.get("PROCESS_API_BASE", "http://localhost:5001").rstrip("/")
-        api_token = "secret123"
+        api_token = os.environ.get("PROCESS_API_TOKEN", "secret123")
         
         # Check if any site is being processed (using session state with timestamp)
         if 'processing_site' not in st.session_state:
