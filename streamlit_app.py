@@ -430,21 +430,40 @@ def overview_table(where_sql: str, params: list):
             
             process_links = df_display.apply(make_disabled_link, axis=1)
         else:
-            # Normal process links
+            # Normal process links (only for unprocessed sites)
             def make_process_link(r):
                 try:
                     score = r.get("Final Score")
+                    site_id = str(r['site_id'])
                     # Only show process link if score is NaN or None (not processed)
                     if pd.isna(score) or score is None:
-                        return f"?process_site={str(r['site_id'])}"
+                        return f"?process_site={site_id}"
                     else:
-                        return ""  # Has a score (including 0), so no process link
+                        return ""  # Has a score, no process link
                 except:
                     return f"?process_site={str(r['site_id'])}"
             
             process_links = df_display.apply(make_process_link, axis=1)
 
         df_display.insert(insert_pos + 2, "Process", process_links)
+        
+        # Add QC column for processed sites
+        def make_qc_link(r):
+            try:
+                score = r.get("Final Score")
+                site_id = str(r['site_id'])
+                # Only show QC link if site has been processed (has a score)
+                if pd.isna(score) or score is None:
+                    return ""  # Not processed, no QC link
+                else:
+                    # Has a score (including 0), show QC link to view results
+                    base_url = os.environ.get("PROCESS_API_BASE", "http://localhost:5001").rstrip("/")
+                    return f"{base_url}/results/{site_id}"
+            except:
+                return ""
+        
+        qc_links = df_display.apply(make_qc_link, axis=1)
+        df_display.insert(insert_pos + 3, "QC", qc_links)
 
         st.dataframe(
             df_display,
@@ -466,11 +485,16 @@ def overview_table(where_sql: str, params: list):
                 ),
                 "Process": st.column_config.LinkColumn(
                     label="Process",
-                    display_text="Process" if not is_processing else "⏳ Processing",
-                    help="Trigger processing for sites with no current score" if not is_processing else f"Processing in progress. Wait until {st.session_state.processing_until.strftime('%H:%M:%S') if st.session_state.processing_until else ''}"
+                    display_text="Process",
+                    help="Trigger processing for sites with no score" if not is_processing else f"Processing in progress. Wait until {st.session_state.processing_until.strftime('%H:%M:%S') if st.session_state.processing_until else ''}"
                 ) if not is_processing else st.column_config.TextColumn(
                     label="Process",
                     help=f"Processing in progress. Wait until {st.session_state.processing_until.strftime('%H:%M:%S') if st.session_state.processing_until else ''}"
+                ),
+                "QC": st.column_config.LinkColumn(
+                    label="QC",
+                    display_text="QC",
+                    help="View qualification results for processed sites"
                 ),
             },
         )
