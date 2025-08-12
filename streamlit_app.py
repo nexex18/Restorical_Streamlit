@@ -13,7 +13,14 @@ st.set_page_config(page_title="Eco Site Analytics", page_icon="📊", layout="wi
 def build_site_filters_ui():
     """Render site-level filters and return SQL where + params for site_overview."""
     st.subheader("Filters")
-    q = st.text_input("Search (name, address, site_id)", "")
+    
+    # Search and Processed filter in the same row
+    search_col, processed_col = st.columns([3, 1])
+    with search_col:
+        q = st.text_input("Search (name, address, site_id)", "")
+    with processed_col:
+        processed_filter = st.selectbox("Processed", ["All", "Yes", "No"], index=0)
+    
     c1, c2, c3 = st.columns(3)
     with c1:
         has_docs = st.selectbox("Has Documents", ["Any", "Yes", "No"], index=0)
@@ -119,6 +126,37 @@ def build_site_filters_ui():
             "site_id IN (SELECT site_id FROM site_qualification_results WHERE COALESCE(qualification_tier,'UNSPECIFIED') = ?)"
         )
         params.append(selected_tier)
+    
+    # Filter by processed status (based on having a final_score in orchestration_runs)
+    if processed_filter != "All":
+        if processed_filter == "Yes":
+            # Sites that have been processed (have a final_score)
+            where.append(
+                """site_id IN (
+                    SELECT DISTINCT site_id 
+                    FROM orchestration_runs 
+                    WHERE completed_at IS NOT NULL 
+                    AND (final_score IS NOT NULL OR EXISTS (
+                        SELECT 1 FROM orchestration_module_results 
+                        WHERE run_id = orchestration_runs.run_id 
+                        AND module_name LIKE '%Score Calculation%'
+                    ))
+                )"""
+            )
+        else:  # "No"
+            # Sites that have NOT been processed (no final_score)
+            where.append(
+                """site_id NOT IN (
+                    SELECT DISTINCT site_id 
+                    FROM orchestration_runs 
+                    WHERE completed_at IS NOT NULL 
+                    AND (final_score IS NOT NULL OR EXISTS (
+                        SELECT 1 FROM orchestration_module_results 
+                        WHERE run_id = orchestration_runs.run_id 
+                        AND module_name LIKE '%Score Calculation%'
+                    ))
+                )"""
+            )
 
     # Contamination medium/status filters via subquery
     if medium_sel or medium_status_sel:
