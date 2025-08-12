@@ -1,0 +1,16 @@
+__pycache__/
+.venv/
+.mypy_cache/
+.pytest_cache/
+.DS_Store
+*.pyc
+*.pyo
+*.pyd
+*.log
+*.sqlite
+*.db
+build/
+dist/
+data/*
+!data/.keep
+
