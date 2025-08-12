@@ -9,6 +9,39 @@ from app_lib.db import query_df, db_exists, DB_PATH
 
 st.set_page_config(page_title="Eco Site Analytics", page_icon="📊", layout="wide")
 
+# Authentication
+def check_auth():
+    """Check if user is authenticated"""
+    if 'authenticated' not in st.session_state:
+        st.session_state.authenticated = False
+    
+    if not st.session_state.authenticated:
+        # Show login form
+        st.title("🔐 Authentication Required")
+        st.markdown("Please enter the password to access Eco Site Analytics.")
+        
+        with st.form("login_form"):
+            password = st.text_input("Password", type="password", key="password_input")
+            submitted = st.form_submit_button("Login")
+            
+            if submitted:
+                # Check password against environment variable or default
+                AUTH_TOKEN = os.environ.get('AUTH_TOKEN', 'secret123')
+                if password == AUTH_TOKEN:
+                    st.session_state.authenticated = True
+                    st.rerun()
+                else:
+                    st.error("❌ Invalid password. Please try again.")
+        
+        # Stop execution if not authenticated
+        st.stop()
+    
+    # Add logout button in sidebar if authenticated
+    with st.sidebar:
+        if st.button("🚪 Logout"):
+            st.session_state.authenticated = False
+            st.rerun()
+
 
 def build_site_filters_ui():
     """Render site-level filters and return SQL where + params for site_overview."""
@@ -539,6 +572,9 @@ def overview_table(where_sql: str, params: list):
 
 
 def main():
+    # Check authentication first
+    check_auth()
+    
     st.title("Eco Site Analytics 📊")
     
     # Display the database path - show full absolute path
