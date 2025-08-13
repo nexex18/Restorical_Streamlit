@@ -73,15 +73,89 @@ def run():
         st.metric("Flagged", f"{int(docs.flagged or 0):,}")
 
     st.subheader("Recent Site Overview")
+    
+    # Initialize pagination state
+    if 'overview_page' not in st.session_state:
+        st.session_state.overview_page = 1
+    
+    # Get total count of sites
+    total_count = query_df("SELECT COUNT(*) as count FROM site_overview").iloc[0]['count']
+    items_per_page = 500
+    total_pages = (total_count + items_per_page - 1) // items_per_page  # Ceiling division
+    
+    # Calculate offset for current page
+    offset = (st.session_state.overview_page - 1) * items_per_page
+    
+    # Query with pagination
     df = query_df(
-        """
+        f"""
         SELECT site_id, site_name, site_address, total_documents, total_contaminants,
                has_documents, has_contaminants, scrape_status, status_icon
         FROM site_overview
         ORDER BY CAST(site_id AS INTEGER)
-        LIMIT 500
+        LIMIT {items_per_page}
+        OFFSET {offset}
         """
     )
+    
+    # Pagination controls and download button
+    if total_pages > 1:
+        col1, col2, col3, col4 = st.columns([1, 2, 1, 1])
+        
+        with col1:
+            if st.button("← Previous", disabled=(st.session_state.overview_page == 1)):
+                st.session_state.overview_page -= 1
+                st.rerun()
+        
+        with col2:
+            st.markdown(f"<div style='text-align: center'>Page {st.session_state.overview_page} of {total_pages} (Total sites: {total_count:,})</div>", unsafe_allow_html=True)
+        
+        with col3:
+            if st.button("Next →", disabled=(st.session_state.overview_page >= total_pages)):
+                st.session_state.overview_page += 1
+                st.rerun()
+        
+        with col4:
+            # Add download all button
+            if st.button("📥 Download All", key="overview_download_all"):
+                with st.spinner(f"Preparing download of all {total_count:,} sites..."):
+                    # Query ALL data without pagination
+                    all_df = query_df(
+                        """
+                        SELECT site_id, site_name, site_address, total_documents, total_contaminants,
+                               has_documents, has_contaminants, scrape_status, status_icon
+                        FROM site_overview
+                        ORDER BY CAST(site_id AS INTEGER)
+                        """
+                    )
+                    
+                    # Convert to CSV
+                    csv = all_df.to_csv(index=False)
+                    
+                    # Offer download
+                    st.download_button(
+                        label="💾 Click to save CSV",
+                        data=csv,
+                        file_name="all_sites_overview.csv",
+                        mime="text/csv",
+                        key="overview_download_csv"
+                    )
+    else:
+        # If only one page, still show download button for consistency
+        col1, col2 = st.columns([3, 1])
+        with col2:
+            if st.button("📥 Download All", key="overview_download_single"):
+                # Convert current df to CSV (since it's all the data anyway)
+                csv = df.to_csv(index=False)
+                st.download_button(
+                    label="💾 Click to save CSV",
+                    data=csv,
+                    file_name="all_sites_overview.csv",
+                    mime="text/csv",
+                    key="overview_download_csv_single"
+                )
+    
+    # Display dataframe
     st.dataframe(df, use_container_width=True, height=500)
 
 

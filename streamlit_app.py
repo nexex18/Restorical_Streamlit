@@ -322,6 +322,27 @@ def docs_summary(where_sql: str, params: list):
 
 
 def overview_table(where_sql: str, params: list):
+    # Initialize pagination state
+    if 'home_overview_page' not in st.session_state:
+        st.session_state.home_overview_page = 1
+    
+    # Get total count of sites
+    total_count_df = query_df(
+        f"""
+        SELECT COUNT(*) as count 
+        FROM site_overview
+        {where_sql}
+        """,
+        params
+    )
+    total_count = total_count_df.iloc[0]['count'] if not total_count_df.empty else 0
+    items_per_page = 500
+    total_pages = (total_count + items_per_page - 1) // items_per_page  # Ceiling division
+    
+    # Calculate offset for current page
+    offset = (st.session_state.home_overview_page - 1) * items_per_page
+    
+    # Query with pagination
     df = query_df(
         f"""
         SELECT site_id, site_name, site_address, total_documents, total_contaminants,
@@ -329,10 +350,71 @@ def overview_table(where_sql: str, params: list):
         FROM site_overview
         {where_sql}
         ORDER BY CAST(site_id AS INTEGER)
-        LIMIT 500
+        LIMIT {items_per_page}
+        OFFSET {offset}
         """,
         params,
     )
+    
+    # Pagination controls and download button (show before the table)
+    if total_pages > 1:
+        col1, col2, col3, col4 = st.columns([1, 2, 1, 1])
+        
+        with col1:
+            if st.button("← Previous", disabled=(st.session_state.home_overview_page == 1), key="home_prev"):
+                st.session_state.home_overview_page -= 1
+                st.rerun()
+        
+        with col2:
+            st.markdown(f"<div style='text-align: center'>Page {st.session_state.home_overview_page} of {total_pages} (Total sites: {total_count:,})</div>", unsafe_allow_html=True)
+        
+        with col3:
+            if st.button("Next →", disabled=(st.session_state.home_overview_page >= total_pages), key="home_next"):
+                st.session_state.home_overview_page += 1
+                st.rerun()
+        
+        with col4:
+            # Add download all button
+            if st.button("📥 Download All", key="home_download_all"):
+                with st.spinner(f"Preparing download of all {total_count:,} sites..."):
+                    # Query ALL data without pagination
+                    all_df = query_df(
+                        f"""
+                        SELECT site_id, site_name, site_address, total_documents, total_contaminants,
+                               has_documents, has_contaminants, scrape_status, status_icon
+                        FROM site_overview
+                        {where_sql}
+                        ORDER BY CAST(site_id AS INTEGER)
+                        """,
+                        params,
+                    )
+                    
+                    # Convert to CSV
+                    csv = all_df.to_csv(index=False)
+                    
+                    # Offer download
+                    st.download_button(
+                        label="💾 Click to save CSV",
+                        data=csv,
+                        file_name="all_sites_overview.csv",
+                        mime="text/csv",
+                        key="home_download_csv"
+                    )
+    else:
+        # If only one page, still show download button for consistency
+        col1, col2 = st.columns([3, 1])
+        with col2:
+            if st.button("📥 Download All", key="home_download_single"):
+                # Convert current df to CSV (since it's all the data anyway)
+                csv = df.to_csv(index=False)
+                st.download_button(
+                    label="💾 Click to save CSV",
+                    data=csv,
+                    file_name="all_sites_overview.csv",
+                    mime="text/csv",
+                    key="home_download_csv_single"
+                )
+    
     if df.empty:
         st.info("No site overview data found.")
     else:
