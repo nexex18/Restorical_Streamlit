@@ -572,13 +572,36 @@ def overview_table(where_sql: str, params: list):
 
 
 def main():
+    import os
+    
     # Check authentication first
     check_auth()
+    
+    # Add button linking to FastHTML application
+    base_url = os.environ.get("PROCESS_API_BASE", "http://localhost:5001").rstrip("/")
+    st.markdown(f'''
+    <div style="text-align: right; margin-bottom: -30px;">
+        <a href="{base_url}" target="_blank" style="text-decoration: none;">
+            <button style="
+                background-color: #059669;
+                color: white;
+                padding: 10px 20px;
+                border: none;
+                border-radius: 5px;
+                font-size: 16px;
+                font-weight: bold;
+                cursor: pointer;
+                transition: background-color 0.3s;
+            ">
+                🚀 End to End Scrape + Qualification
+            </button>
+        </a>
+    </div>
+    ''', unsafe_allow_html=True)
     
     st.title("Scrapped WA Eco Sites 📊")
     
     # Display the database path - show full absolute path
-    import os
     full_db_path = os.path.abspath(DB_PATH)
     st.sidebar.markdown("### Database Configuration")
     st.sidebar.info(f"**Database Path:**\n`{full_db_path}`")
