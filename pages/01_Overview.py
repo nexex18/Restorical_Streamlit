@@ -79,9 +79,9 @@ def run():
         st.session_state.overview_page = 1
     
     # Get total count of sites
-    total_count = query_df("SELECT COUNT(*) as count FROM site_overview").iloc[0]['count']
+    total_count = int(query_df("SELECT COUNT(*) as count FROM site_overview").iloc[0]['count'])
     items_per_page = 500
-    total_pages = (total_count + items_per_page - 1) // items_per_page  # Ceiling division
+    total_pages = int((total_count + items_per_page - 1) // items_per_page)  # Ceiling division, ensure int
     
     # Calculate offset for current page
     offset = (st.session_state.overview_page - 1) * items_per_page

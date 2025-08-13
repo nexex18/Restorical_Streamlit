@@ -335,9 +335,9 @@ def overview_table(where_sql: str, params: list):
         """,
         params
     )
-    total_count = total_count_df.iloc[0]['count'] if not total_count_df.empty else 0
+    total_count = int(total_count_df.iloc[0]['count']) if not total_count_df.empty else 0
     items_per_page = 500
-    total_pages = (total_count + items_per_page - 1) // items_per_page  # Ceiling division
+    total_pages = int((total_count + items_per_page - 1) // items_per_page)  # Ceiling division, ensure int
     
     # Calculate offset for current page
     offset = (st.session_state.home_overview_page - 1) * items_per_page
