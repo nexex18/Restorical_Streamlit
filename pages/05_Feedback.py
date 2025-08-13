@@ -13,22 +13,70 @@ def run():
     st.title("User Feedback 📝")
     st.caption("Review feedback provided on AI qualification analyses")
     
-    # Get sites with feedback
-    feedback_summary = query_df("""
-        SELECT 
-            af.site_id,
-            so.site_name,
-            so.site_address,
-            COUNT(*) as feedback_count,
-            MAX(af.submitted_at) as latest_feedback,
-            SUM(CASE WHEN af.age_correct = 1 THEN 1 ELSE 0 END) as age_correct_count,
-            SUM(CASE WHEN af.third_party_correct = 1 THEN 1 ELSE 0 END) as third_party_correct_count,
-            SUM(CASE WHEN af.document_selection_correct = 1 THEN 1 ELSE 0 END) as doc_correct_count
-        FROM ai_feedback af
-        LEFT JOIN site_overview so ON af.site_id = so.site_id
-        GROUP BY af.site_id, so.site_name, so.site_address
-        ORDER BY latest_feedback DESC
-    """)
+    # Get sites with feedback - first check what columns exist
+    try:
+        # Try with score columns if they exist
+        feedback_summary = query_df("""
+            SELECT 
+                af.site_id,
+                so.site_name,
+                so.site_address,
+                COUNT(*) as feedback_count,
+                MAX(af.submitted_at) as latest_feedback,
+                SUM(CASE WHEN af.age_correct = 1 THEN 1 ELSE 0 END) as age_correct_count,
+                SUM(CASE WHEN af.third_party_correct = 1 THEN 1 ELSE 0 END) as third_party_correct_count,
+                SUM(CASE WHEN af.document_selection_correct = 1 THEN 1 ELSE 0 END) as doc_correct_count,
+                -- Get the latest scores from the most recent feedback
+                MAX(CASE WHEN af.submitted_at = latest.max_submitted THEN af.age_score END) as age_score,
+                MAX(CASE WHEN af.submitted_at = latest.max_submitted THEN af.third_party_score END) as third_party_score,
+                MAX(CASE WHEN af.submitted_at = latest.max_submitted THEN af.age_correct END) as latest_age_correct,
+                MAX(CASE WHEN af.submitted_at = latest.max_submitted THEN af.third_party_correct END) as latest_third_party_correct
+            FROM ai_feedback af
+            LEFT JOIN site_overview so ON af.site_id = so.site_id
+            LEFT JOIN (
+                SELECT site_id, MAX(submitted_at) as max_submitted
+                FROM ai_feedback
+                GROUP BY site_id
+            ) latest ON af.site_id = latest.site_id
+            GROUP BY af.site_id, so.site_name, so.site_address
+            ORDER BY latest_feedback DESC
+        """)
+    except:
+        # Fallback if score columns don't exist - get scores from orchestration runs
+        feedback_summary = query_df("""
+            SELECT 
+                af.site_id,
+                so.site_name,
+                so.site_address,
+                COUNT(DISTINCT af.run_id) as feedback_count,
+                MAX(af.submitted_at) as latest_feedback,
+                SUM(CASE WHEN af.age_correct = 1 THEN 1 ELSE 0 END) as age_correct_count,
+                SUM(CASE WHEN af.third_party_correct = 1 THEN 1 ELSE 0 END) as third_party_correct_count,
+                SUM(CASE WHEN af.document_selection_correct = 1 THEN 1 ELSE 0 END) as doc_correct_count,
+                -- Get scores from orchestration module results for the latest feedback
+                MAX(CASE WHEN af.submitted_at = latest.max_submitted THEN scores.age_score END) as age_score,
+                MAX(CASE WHEN af.submitted_at = latest.max_submitted THEN scores.third_party_score END) as third_party_score,
+                MAX(CASE WHEN af.submitted_at = latest.max_submitted THEN af.age_correct END) as latest_age_correct,
+                MAX(CASE WHEN af.submitted_at = latest.max_submitted THEN af.third_party_correct END) as latest_third_party_correct
+            FROM ai_feedback af
+            LEFT JOIN site_overview so ON af.site_id = so.site_id
+            LEFT JOIN (
+                SELECT site_id, MAX(submitted_at) as max_submitted
+                FROM ai_feedback
+                GROUP BY site_id
+            ) latest ON af.site_id = latest.site_id
+            LEFT JOIN (
+                -- Extract scores from orchestration module results
+                SELECT 
+                    omr.run_id,
+                    json_extract(omr.module_result_json, '$.data.age_of_contamination_score') as age_score,
+                    json_extract(omr.module_result_json, '$.data.third_party_impact_score') as third_party_score
+                FROM orchestration_module_results omr
+                WHERE omr.module_name LIKE '%Score Calculation%'
+            ) scores ON af.run_id = scores.run_id
+            GROUP BY af.site_id, so.site_name, so.site_address
+            ORDER BY latest_feedback DESC
+        """)
     
     if feedback_summary.empty:
         st.info("No feedback has been submitted yet.")
@@ -54,9 +102,35 @@ def run():
     selected_site = st.selectbox("Select a site to view detailed feedback", site_options)
     
     if selected_site == "All Sites":
-        # Show summary table
+        # Prepare display dataframe with formatted columns
+        display_df = feedback_summary.copy()
+        
+        # Format the feedback correctness columns
+        display_df['Age Feedback'] = display_df['latest_age_correct'].apply(
+            lambda x: '✅ Correct' if x == 1 else ('❌ Incorrect' if x == 0 else 'No feedback')
+        )
+        display_df['3rd Party Feedback'] = display_df['latest_third_party_correct'].apply(
+            lambda x: '✅ Correct' if x == 1 else ('❌ Incorrect' if x == 0 else 'No feedback')
+        )
+        
+        # Format scores (handle None values)
+        display_df['Age Score'] = display_df['age_score'].apply(
+            lambda x: f"{int(x)}" if pd.notna(x) else "N/A"
+        )
+        display_df['3rd Party Score'] = display_df['third_party_score'].apply(
+            lambda x: f"{int(x)}" if pd.notna(x) else "N/A"
+        )
+        
+        # Show enhanced summary table with scores right after site_id
         st.dataframe(
-            feedback_summary[['site_id', 'site_name', 'site_address', 'feedback_count', 'latest_feedback']],
+            display_df[['site_id', 'Age Score', 'Age Feedback', '3rd Party Score', '3rd Party Feedback',
+                       'site_name', 'site_address', 'feedback_count', 'latest_feedback']].rename(columns={
+                'site_id': 'Site ID',
+                'site_name': 'Site Name', 
+                'site_address': 'Address',
+                'feedback_count': 'Total Feedback',
+                'latest_feedback': 'Latest Feedback'
+            }),
             use_container_width=True,
             height=400
         )
