@@ -52,7 +52,7 @@ def build_site_filters_ui():
     with search_col:
         q = st.text_input("Search (name, address, site_id)", "")
     with processed_col:
-        processed_filter = st.selectbox("Processed", ["All", "Yes", "No"], index=0)
+        processed_filter = st.selectbox("Processed for age and 3rd party quals", ["All", "Yes", "No"], index=0)
     
     c1, c2, c3 = st.columns(3)
     with c1:
@@ -575,7 +575,7 @@ def main():
     # Check authentication first
     check_auth()
     
-    st.title("Eco Site Analytics 📊")
+    st.title("Scrapped WA Eco Sites 📊")
     
     # Display the database path - show full absolute path
     import os
@@ -588,7 +588,7 @@ def main():
         st.error(f"Database not found at {DB_PATH}. Please ensure the database file exists or set the ECO_DB_PATH environment variable.")
         st.stop()
 
-    st.caption("Isolated analytics UI for exploring narratives, documents, qualifications, contaminants, and more.")
+    st.caption("Analytics UI for exploring narratives, documents, qualifications, contaminants, and more.")
 
     where_sql, params, apply_to_dashboard = build_site_filters_ui()
 
