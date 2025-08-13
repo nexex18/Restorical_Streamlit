@@ -565,7 +565,8 @@ def overview_table(where_sql: str, params: list):
                 "QC": st.column_config.LinkColumn(
                     label="QC",
                     display_text="QC",
-                    help="View qualification results for processed sites"
+                    help="View qualification results for processed sites",
+                    target="_qc"  # Named target to reuse the same tab
                 ),
             },
         )

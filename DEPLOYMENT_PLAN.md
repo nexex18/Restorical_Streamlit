@@ -15,7 +15,7 @@ DigitalOcean Droplet (162.243.186.65)
 │   │   │       └── ecology_sites.db  # Shared database
 │   │   └── ...
 │   └── eco-analytics/        # New Streamlit app (Port 8501)
-│       ├── .venv/            # Separate virtual environment
+│       ├── venv/             # Separate virtual environment (local to project)
 │       ├── streamlit_app.py
 │       ├── app_lib/
 │       ├── pages/
@@ -59,8 +59,11 @@ Create a `.env.example` file:
 ECO_DB_PATH=/app/restorical/data/database/ecology_sites.db
 
 # API Configuration  
-PROCESS_API_BASE=http://localhost:5001
-PROCESS_API_TOKEN=secret123
+PROCESS_API_BASE=http://162.243.186.65:5001  # Use server IP in production
+PROCESS_API_TOKEN=restorical
+
+# Authentication
+AUTH_TOKEN=restorical
 
 # Streamlit Configuration
 STREAMLIT_SERVER_PORT=8501
@@ -86,15 +89,24 @@ git clone https://github.com/YOUR_USERNAME/eco-site-analytics.git .
 
 #### 2.3 Set Up Python Environment
 ```bash
+# IMPORTANT: Python 3.13 has compatibility issues with older pandas versions
+# If using Python 3.13, install packages individually:
+
 # Create virtual environment (separate from FastHTML app)
-python3 -m venv .venv
-source .venv/bin/activate
+python3 -m venv venv
+source venv/bin/activate
 
-# Upgrade pip
-pip install --upgrade pip
+# Upgrade pip and install build tools
+pip install --upgrade pip setuptools wheel
 
-# Install dependencies
-pip install -r requirements.txt
+# For Python 3.13, install packages separately:
+pip install numpy
+pip install pandas==2.2.3  # Use 2.2.3+ for Python 3.13 compatibility
+pip install streamlit==1.37.1 plotly==5.22.0 requests==2.31.0
+pip install python-dotenv  # Required for .env file loading
+
+# OR if using Python 3.12 or earlier:
+# pip install -r requirements.txt
 ```
 
 #### 2.4 Configure Environment
@@ -105,14 +117,18 @@ cat > .env << 'EOF'
 ECO_DB_PATH=/app/restorical/data/database/ecology_sites.db
 
 # API Configuration (FastHTML app endpoints)
-PROCESS_API_BASE=http://localhost:5001
-PROCESS_API_TOKEN=secret123
+# In production, set to server IP: http://162.243.186.65:5001
+PROCESS_API_BASE=http://162.243.186.65:5001
+PROCESS_API_TOKEN=restorical
 
 # Streamlit Configuration
 STREAMLIT_SERVER_PORT=8501
 STREAMLIT_SERVER_ADDRESS=0.0.0.0
 STREAMLIT_SERVER_HEADLESS=true
 STREAMLIT_BROWSER_GATHER_USAGE_STATS=false
+
+# Authentication
+AUTH_TOKEN=restorical
 EOF
 
 # Create Streamlit config
@@ -144,7 +160,7 @@ ufw reload
 #### 2.6 Test Application
 ```bash
 # Activate virtual environment
-source /app/eco-analytics/.venv/bin/activate
+source /app/eco-analytics/venv/bin/activate
 
 # Set environment variables
 export $(cat .env | xargs)
@@ -162,7 +178,7 @@ streamlit run streamlit_app.py
 cat > /app/eco-analytics/start_app.sh << 'EOF'
 #!/bin/bash
 cd /app/eco-analytics
-source .venv/bin/activate
+source venv/bin/activate
 export $(cat .env | xargs)
 streamlit run streamlit_app.py
 EOF
@@ -195,9 +211,9 @@ After=network.target
 Type=simple
 User=root
 WorkingDirectory=/app/eco-analytics
-Environment="PATH=/app/eco-analytics/.venv/bin"
+Environment="PATH=/app/eco-analytics/venv/bin"
 EnvironmentFile=/app/eco-analytics/.env
-ExecStart=/app/eco-analytics/.venv/bin/streamlit run streamlit_app.py
+ExecStart=/app/eco-analytics/venv/bin/streamlit run streamlit_app.py
 Restart=always
 RestartSec=10
 
@@ -243,7 +259,7 @@ echo "Pulling latest changes from GitHub..."
 git pull origin main
 
 # Activate virtual environment
-source .venv/bin/activate
+source venv/bin/activate
 
 # Update dependencies if requirements.txt changed
 if git diff HEAD@{1} --name-only | grep -q "requirements.txt"; then
