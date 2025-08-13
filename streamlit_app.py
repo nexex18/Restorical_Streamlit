@@ -322,9 +322,20 @@ def docs_summary(where_sql: str, params: list):
 
 
 def overview_table(where_sql: str, params: list):
+    # Create a hash of the current filter state to detect changes
+    import hashlib
+    filter_hash = hashlib.md5(f"{where_sql}{params}".encode()).hexdigest()
+    
     # Initialize pagination state
     if 'home_overview_page' not in st.session_state:
         st.session_state.home_overview_page = 1
+    
+    # Check if filters have changed and reset to page 1 if they have
+    if 'home_filter_hash' not in st.session_state:
+        st.session_state.home_filter_hash = filter_hash
+    elif st.session_state.home_filter_hash != filter_hash:
+        st.session_state.home_filter_hash = filter_hash
+        st.session_state.home_overview_page = 1  # Reset to page 1 when filters change
     
     # Get total count of sites
     total_count_df = query_df(
