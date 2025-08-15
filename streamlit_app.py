@@ -653,15 +653,21 @@ def overview_table(where_sql: str, params: list):
         qc_links = df_display.apply(make_qc_link, axis=1)
         df_display.insert(insert_pos + 3, "QC", qc_links)
         
-        # Add Feedback count column
-        try:
-            feedback_counts = df_display["site_id"].astype(str).map(lambda sid: feedback_map.get(sid, 0))
-        except Exception:
-            feedback_counts = df_display["site_id"].map(lambda sid: feedback_map.get(str(sid), 0))
+        # Add Feedback count column with links
+        def make_feedback_cell(r):
+            try:
+                site_id = str(r['site_id'])
+                count = feedback_map.get(site_id, 0)
+                if count > 0:
+                    # Return the link for LinkColumn
+                    return f"/Feedback?site_id={site_id}"
+                else:
+                    return ""
+            except:
+                return ""
         
-        # Format feedback display - show count or empty if 0
-        feedback_display = feedback_counts.apply(lambda count: f"📝 {count}" if count > 0 else "")
-        df_display.insert(insert_pos + 4, "Feedback", feedback_display)
+        feedback_links = df_display.apply(make_feedback_cell, axis=1)
+        df_display.insert(insert_pos + 4, "Feedback", feedback_links)
 
         st.dataframe(
             df_display,
@@ -694,9 +700,10 @@ def overview_table(where_sql: str, params: list):
                     display_text="QC",
                     help="View qualification results for processed sites"
                 ),
-                "Feedback": st.column_config.TextColumn(
+                "Feedback": st.column_config.LinkColumn(
                     label="Feedback",
-                    help="Number of feedback entries for this site"
+                    display_text="View",
+                    help="Click to view feedback details for this site"
                 ),
             },
         )

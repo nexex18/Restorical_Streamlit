@@ -166,6 +166,10 @@ def run():
                 use_container_width=True
             )
     
+    # Check for site_id query parameter to auto-expand
+    query_params = st.query_params
+    auto_expand_site = query_params.get("site_id", None)
+    
     # Create expandable rows for each site with feedback
     base_url = os.environ.get("PROCESS_API_BASE", "http://localhost:5001").rstrip("/")
     
@@ -182,8 +186,11 @@ def run():
         age_feedback = '✅' if row['latest_age_correct'] == 1 else ('❌' if row['latest_age_correct'] == 0 else '—')
         tp_feedback = '✅' if row['latest_third_party_correct'] == 1 else ('❌' if row['latest_third_party_correct'] == 0 else '—')
         
+        # Auto-expand if this is the requested site
+        should_expand = (str(site_id) == str(auto_expand_site)) if auto_expand_site else False
+        
         # Create expander with summary info in the label
-        with st.expander(f"**Site {site_id}** - {site_name[:50]}... | Age: {age_score} {age_feedback} | 3rd Party: {tp_score} {tp_feedback} | Feedbacks: {int(actual_count)}"):
+        with st.expander(f"**Site {site_id}** - {site_name[:50]}... | Age: {age_score} {age_feedback} | 3rd Party: {tp_score} {tp_feedback} | Feedbacks: {int(actual_count)}", expanded=should_expand):
             # Links to results and site detail pages
             results_url = f"{base_url}/results/{site_id}"
             site_detail_url = f"/Site_Detail?site_id={site_id}"
