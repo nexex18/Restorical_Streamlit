@@ -2,6 +2,7 @@ import streamlit as st
 from app_lib.db import query_df, db_exists
 import pandas as pd
 import json
+import os
 
 st.set_page_config(page_title="Feedback", page_icon="📝", layout="wide")
 
@@ -105,6 +106,12 @@ def run():
         # Prepare display dataframe with formatted columns
         display_df = feedback_summary.copy()
         
+        # Add clickable link to results page for each site
+        base_url = os.environ.get("PROCESS_API_BASE", "http://localhost:5001").rstrip("/")
+        display_df['Site ID'] = display_df['site_id'].apply(
+            lambda sid: f"{base_url}/results/{sid}"
+        )
+        
         # Format the feedback correctness columns
         display_df['Age Feedback'] = display_df['latest_age_correct'].apply(
             lambda x: '✅ Correct' if x == 1 else ('❌ Incorrect' if x == 0 else 'No feedback')
@@ -123,22 +130,33 @@ def run():
         
         # Show enhanced summary table with scores right after site_id
         st.dataframe(
-            display_df[['site_id', 'Age Score', 'Age Feedback', '3rd Party Score', '3rd Party Feedback',
+            display_df[['Site ID', 'Age Score', 'Age Feedback', '3rd Party Score', '3rd Party Feedback',
                        'site_name', 'site_address', 'feedback_count', 'latest_feedback']].rename(columns={
-                'site_id': 'Site ID',
                 'site_name': 'Site Name', 
                 'site_address': 'Address',
                 'feedback_count': 'Total Feedback',
                 'latest_feedback': 'Latest Feedback'
             }),
             use_container_width=True,
-            height=400
+            height=400,
+            column_config={
+                "Site ID": st.column_config.LinkColumn(
+                    "Site ID",
+                    help="Click to view detailed AI analysis results",
+                    display_text=".*/(.+)$"  # Regex to extract and show only the site ID from the URL
+                )
+            }
         )
     else:
         # Show detailed feedback for selected site
         site_id = selected_site.split(" - ")[0]
         
+        # Create link to results page
+        base_url = os.environ.get("PROCESS_API_BASE", "http://localhost:5001").rstrip("/")
+        results_url = f"{base_url}/results/{site_id}"
+        
         st.subheader(f"Feedback for Site {site_id}")
+        st.markdown(f"[🔍 View AI Analysis Results for Site {site_id}]({results_url})")
         
         # Get all feedback for this site
         detailed_feedback = query_df("""
