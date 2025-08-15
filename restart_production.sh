@@ -37,11 +37,15 @@ fi
 
 # Step 3: Load environment variables
 echo -e "\n${YELLOW}Loading environment variables...${NC}"
-export $(cat .env | grep -v '^#' | grep -v '^EOF' | xargs)
+# Source the .env file to load variables into current shell
+set -a  # automatically export all variables
+source .env
+set +a  # turn off automatic export
 echo -e "${GREEN}✓ Environment variables loaded${NC}"
 
 # Step 4: Start Streamlit in background
 echo -e "\n${YELLOW}Starting Streamlit application...${NC}"
+# The environment variables are now in the shell and will be inherited by the child process
 nohup streamlit run streamlit_app.py > streamlit.log 2>&1 &
 STREAMLIT_PID=$!
 sleep 3
