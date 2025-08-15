@@ -711,13 +711,10 @@ def main():
     # Metrics
     metric_row(where_sql if apply_to_dashboard else "", params if apply_to_dashboard else [])
 
-    # Charts (tiers removed per request). Show contaminants and docs summary.
-    lcol, rcol = st.columns([2, 1])
-    with lcol:
-        contaminant_chart(where_sql if apply_to_dashboard else "", params if apply_to_dashboard else [])
-    with rcol:
-        docs_summary(where_sql if apply_to_dashboard else "", params if apply_to_dashboard else [])
+    # Docs summary metrics
+    docs_summary(where_sql if apply_to_dashboard else "", params if apply_to_dashboard else [])
 
+    st.divider()
     st.subheader("Recent Site Overview")
     overview_table(where_sql, params)
 
