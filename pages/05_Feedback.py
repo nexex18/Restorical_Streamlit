@@ -161,81 +161,87 @@ def run():
                 st.write(f"**Site Address:** {site_info['site_address'] or 'Not Available'}")
                 st.write(f"**Total Feedback Entries:** {len(detailed_feedback)}")
                 
-                # Display each feedback entry - INSIDE the site expander
-                for fb_idx, feedback in detailed_feedback.iterrows():
-                    with st.expander(f"Feedback #{fb_idx + 1} - Run ID: {feedback['run_id'][:8]}... ({feedback['submitted_at']})", expanded=(fb_idx == 0)):
-                        
-                        # Age Score Feedback
-                        st.markdown("#### 📅 Age Score Feedback")
-                        if pd.notna(feedback['age_correct']):
-                            if feedback['age_correct']:
-                                st.success("✅ Age score was marked as CORRECT")
+                st.divider()
+                
+                # Display each feedback entry using tabs instead of nested expanders
+                if len(detailed_feedback) > 1:
+                    tab_labels = [f"Feedback #{i+1}" for i in range(len(detailed_feedback))]
+                    tabs = st.tabs(tab_labels)
+                    
+                    for fb_idx, (feedback, tab) in enumerate(zip(detailed_feedback.itertuples(), tabs)):
+                        with tab:
+                            st.caption(f"Run ID: {feedback.run_id[:8]}... | Submitted: {feedback.submitted_at}")
+                            
+                            # Age Score Feedback
+                            st.markdown("#### 📅 Age Score Feedback")
+                            if pd.notna(feedback.age_correct):
+                                if feedback.age_correct:
+                                    st.success("✅ Age score was marked as CORRECT")
+                                else:
+                                    st.error("❌ Age score was marked as INCORRECT")
                             else:
-                                st.error("❌ Age score was marked as INCORRECT")
-                        else:
-                            st.info("No age score correctness feedback provided")
-                        
-                        if pd.notna(feedback['age_feedback']) and feedback['age_feedback']:
-                            st.text_area("Detailed Age Feedback", feedback['age_feedback'], disabled=True, height=100, key=f"age_{site_id}_{fb_idx}")
-                        else:
-                            st.caption("No detailed age feedback provided")
-                        
-                        # Third-Party Feedback
-                        st.markdown("#### 🏢 Third-Party Impact Feedback")
-                        if pd.notna(feedback['third_party_correct']):
-                            if feedback['third_party_correct']:
-                                st.success("✅ Third-party impact score was marked as CORRECT")
+                                st.info("No age score correctness feedback provided")
+                            
+                            if pd.notna(feedback.age_feedback) and feedback.age_feedback:
+                                st.text_area("Detailed Age Feedback", feedback.age_feedback, disabled=True, height=100, key=f"age_{site_id}_{fb_idx}")
                             else:
-                                st.error("❌ Third-party impact score was marked as INCORRECT")
-                        else:
-                            st.info("No third-party score correctness feedback provided")
-                        
-                        if pd.notna(feedback['third_party_feedback']) and feedback['third_party_feedback']:
-                            st.text_area("Detailed Third-Party Feedback", feedback['third_party_feedback'], disabled=True, height=100, key=f"tp_{site_id}_{fb_idx}")
-                        else:
-                            st.caption("No detailed third-party feedback provided")
-                        
-                        # Document Selection Feedback
-                        st.markdown("#### 📄 Document Selection & Priority Feedback")
-                        if pd.notna(feedback['document_selection_correct']):
-                            if feedback['document_selection_correct']:
-                                st.success("✅ Document selection and priority order was marked as APPROPRIATE")
+                                st.caption("No detailed age feedback provided")
+                            
+                            # Third-Party Feedback
+                            st.markdown("#### 🏢 Third-Party Impact Feedback")
+                            if pd.notna(feedback.third_party_correct):
+                                if feedback.third_party_correct:
+                                    st.success("✅ Third-party impact score was marked as CORRECT")
+                                else:
+                                    st.error("❌ Third-party impact score was marked as INCORRECT")
                             else:
-                                st.error("❌ Document selection or priority order was marked as NEEDS IMPROVEMENT")
-                        else:
-                            st.info("No document selection correctness feedback provided")
-                        
-                        if pd.notna(feedback['document_selection_feedback']) and feedback['document_selection_feedback']:
-                            st.text_area("Detailed Document Selection Feedback", feedback['document_selection_feedback'], disabled=True, height=100, key=f"doc_{site_id}_{fb_idx}")
-                        else:
-                            st.caption("No detailed document selection feedback provided")
-                        
-                        # Document Details
-                        if pd.notna(feedback['selected_documents_shown']) and feedback['selected_documents_shown']:
-                            st.markdown("#### 📋 Documents Shown (Priority Order)")
-                            try:
-                                selected_doc_ids = json.loads(feedback['selected_documents_shown'])
-                                st.write(f"**Total documents shown:** {len(selected_doc_ids)}")
-                                
-                                # Get document details for these IDs
-                                if selected_doc_ids:
-                                    placeholders = ','.join(['?'] * len(selected_doc_ids))
-                                    doc_details = query_df(f"""
-                                        SELECT 
-                                            id,
-                                            document_title,
-                                            document_type,
-                                            document_date,
-                                            site_id,
-                                            document_url
-                                        FROM site_documents
-                                        WHERE id IN ({placeholders})
-                                    """, selected_doc_ids)
+                                st.info("No third-party score correctness feedback provided")
+                            
+                            if pd.notna(feedback.third_party_feedback) and feedback.third_party_feedback:
+                                st.text_area("Detailed Third-Party Feedback", feedback.third_party_feedback, disabled=True, height=100, key=f"tp_{site_id}_{fb_idx}")
+                            else:
+                                st.caption("No detailed third-party feedback provided")
+                            
+                            # Document Selection Feedback
+                            st.markdown("#### 📄 Document Selection & Priority Feedback")
+                            if pd.notna(feedback.document_selection_correct):
+                                if feedback.document_selection_correct:
+                                    st.success("✅ Document selection and priority order was marked as APPROPRIATE")
+                                else:
+                                    st.error("❌ Document selection or priority order was marked as NEEDS IMPROVEMENT")
+                            else:
+                                st.info("No document selection correctness feedback provided")
+                            
+                            if pd.notna(feedback.document_selection_feedback) and feedback.document_selection_feedback:
+                                st.text_area("Detailed Document Selection Feedback", feedback.document_selection_feedback, disabled=True, height=100, key=f"doc_{site_id}_{fb_idx}")
+                            else:
+                                st.caption("No detailed document selection feedback provided")
+                            
+                            # Document Details
+                            if pd.notna(feedback.selected_documents_shown) and feedback.selected_documents_shown:
+                                st.markdown("#### 📋 Documents Shown (Priority Order)")
+                                try:
+                                    selected_doc_ids = json.loads(feedback.selected_documents_shown)
+                                    st.write(f"**Total documents shown:** {len(selected_doc_ids)}")
                                     
-                                    # Create a map for ordering
-                                    doc_map = {str(row['id']): row for _, row in doc_details.iterrows()} if not doc_details.empty else {}
-                                    
-                                    with st.expander("View document list in priority order", expanded=True):
+                                    # Get document details for these IDs
+                                    if selected_doc_ids:
+                                        placeholders = ','.join(['?'] * len(selected_doc_ids))
+                                        doc_details = query_df(f"""
+                                            SELECT 
+                                                id,
+                                                document_title,
+                                                document_type,
+                                                document_date,
+                                                site_id,
+                                                document_url
+                                            FROM site_documents
+                                            WHERE id IN ({placeholders})
+                                        """, selected_doc_ids)
+                                        
+                                        # Create a map for ordering
+                                        doc_map = {str(row['id']): row for _, row in doc_details.iterrows()} if not doc_details.empty else {}
+                                        
                                         for i, doc_id in enumerate(selected_doc_ids, 1):
                                             doc_info = doc_map.get(str(doc_id))
                                             if doc_info is not None:
@@ -257,19 +263,129 @@ def run():
                                                     st.write(f"{i}. {display_name} (no link available)")
                                             else:
                                                 st.write(f"{i}. Document ID: {doc_id} (details not found)")
-                                else:
-                                    st.caption("No documents in selection")
-                            except Exception as e:
-                                st.write(f"Error loading document list: {str(e)}")
+                                    else:
+                                        st.caption("No documents in selection")
+                                except Exception as e:
+                                    st.write(f"Error loading document list: {str(e)}")
+                            else:
+                                st.markdown("#### 📋 Documents Shown")
+                                st.caption("No document list available for this feedback")
+                            
+                            # Overall Notes
+                            st.markdown("#### 💭 Overall Notes")
+                            if pd.notna(feedback.overall_notes) and feedback.overall_notes:
+                                st.text_area("Additional Notes", feedback.overall_notes, disabled=True, height=150, key=f"overall_{site_id}_{fb_idx}")
+                            else:
+                                st.caption("No additional notes provided")
+                else:
+                    # Single feedback entry - display directly without tabs
+                    feedback = detailed_feedback.iloc[0]
+                    st.caption(f"Run ID: {feedback['run_id'][:8]}... | Submitted: {feedback['submitted_at']}")
+                    
+                    # Age Score Feedback
+                    st.markdown("#### 📅 Age Score Feedback")
+                    if pd.notna(feedback['age_correct']):
+                        if feedback['age_correct']:
+                            st.success("✅ Age score was marked as CORRECT")
                         else:
-                            st.markdown("#### 📋 Documents Shown")
-                            st.caption("No document list available for this feedback")
-                        
-                        # Overall Notes
-                        st.markdown("#### 💭 Overall Notes")
-                        if pd.notna(feedback['overall_notes']) and feedback['overall_notes']:
-                            st.text_area("Additional Notes", feedback['overall_notes'], disabled=True, height=150, key=f"overall_{site_id}_{fb_idx}")
+                            st.error("❌ Age score was marked as INCORRECT")
+                    else:
+                        st.info("No age score correctness feedback provided")
+                    
+                    if pd.notna(feedback['age_feedback']) and feedback['age_feedback']:
+                        st.text_area("Detailed Age Feedback", feedback['age_feedback'], disabled=True, height=100, key=f"age_{site_id}_single")
+                    else:
+                        st.caption("No detailed age feedback provided")
+                    
+                    # Third-Party Feedback
+                    st.markdown("#### 🏢 Third-Party Impact Feedback")
+                    if pd.notna(feedback['third_party_correct']):
+                        if feedback['third_party_correct']:
+                            st.success("✅ Third-party impact score was marked as CORRECT")
                         else:
-                            st.caption("No additional notes provided")
+                            st.error("❌ Third-party impact score was marked as INCORRECT")
+                    else:
+                        st.info("No third-party score correctness feedback provided")
+                    
+                    if pd.notna(feedback['third_party_feedback']) and feedback['third_party_feedback']:
+                        st.text_area("Detailed Third-Party Feedback", feedback['third_party_feedback'], disabled=True, height=100, key=f"tp_{site_id}_single")
+                    else:
+                        st.caption("No detailed third-party feedback provided")
+                    
+                    # Document Selection Feedback
+                    st.markdown("#### 📄 Document Selection & Priority Feedback")
+                    if pd.notna(feedback['document_selection_correct']):
+                        if feedback['document_selection_correct']:
+                            st.success("✅ Document selection and priority order was marked as APPROPRIATE")
+                        else:
+                            st.error("❌ Document selection or priority order was marked as NEEDS IMPROVEMENT")
+                    else:
+                        st.info("No document selection correctness feedback provided")
+                    
+                    if pd.notna(feedback['document_selection_feedback']) and feedback['document_selection_feedback']:
+                        st.text_area("Detailed Document Selection Feedback", feedback['document_selection_feedback'], disabled=True, height=100, key=f"doc_{site_id}_single")
+                    else:
+                        st.caption("No detailed document selection feedback provided")
+                    
+                    # Document Details
+                    if pd.notna(feedback['selected_documents_shown']) and feedback['selected_documents_shown']:
+                        st.markdown("#### 📋 Documents Shown (Priority Order)")
+                        try:
+                            selected_doc_ids = json.loads(feedback['selected_documents_shown'])
+                            st.write(f"**Total documents shown:** {len(selected_doc_ids)}")
+                            
+                            # Get document details for these IDs
+                            if selected_doc_ids:
+                                placeholders = ','.join(['?'] * len(selected_doc_ids))
+                                doc_details = query_df(f"""
+                                    SELECT 
+                                        id,
+                                        document_title,
+                                        document_type,
+                                        document_date,
+                                        site_id,
+                                        document_url
+                                    FROM site_documents
+                                    WHERE id IN ({placeholders})
+                                """, selected_doc_ids)
+                                
+                                # Create a map for ordering
+                                doc_map = {str(row['id']): row for _, row in doc_details.iterrows()} if not doc_details.empty else {}
+                                
+                                for i, doc_id in enumerate(selected_doc_ids, 1):
+                                    doc_info = doc_map.get(str(doc_id))
+                                    if doc_info is not None:
+                                        doc_title = doc_info['document_title'] or f"Document {doc_id}"
+                                        doc_type = doc_info['document_type'] or ""
+                                        doc_date = doc_info['document_date'] or ""
+                                        
+                                        # Build display name with type and date if available
+                                        display_name = doc_title
+                                        if doc_type:
+                                            display_name += f" ({doc_type})"
+                                        if doc_date:
+                                            display_name += f" - {doc_date}"
+                                        
+                                        if pd.notna(doc_info['document_url']) and doc_info['document_url']:
+                                            # Create clickable link to WA Ecology site
+                                            st.markdown(f"{i}. [{display_name}]({doc_info['document_url']})")
+                                        else:
+                                            st.write(f"{i}. {display_name} (no link available)")
+                                    else:
+                                        st.write(f"{i}. Document ID: {doc_id} (details not found)")
+                            else:
+                                st.caption("No documents in selection")
+                        except Exception as e:
+                            st.write(f"Error loading document list: {str(e)}")
+                    else:
+                        st.markdown("#### 📋 Documents Shown")
+                        st.caption("No document list available for this feedback")
+                    
+                    # Overall Notes
+                    st.markdown("#### 💭 Overall Notes")
+                    if pd.notna(feedback['overall_notes']) and feedback['overall_notes']:
+                        st.text_area("Additional Notes", feedback['overall_notes'], disabled=True, height=150, key=f"overall_{site_id}_single")
+                    else:
+                        st.caption("No additional notes provided")
 
 run()
