@@ -139,9 +139,15 @@ def run():
         
         # Create expander with summary info in the label
         with st.expander(f"**Site {site_id}** - {site_name[:50]}... | Age: {age_score} {age_feedback} | 3rd Party: {tp_score} {tp_feedback} | Feedbacks: {int(actual_count)}"):
-            # Link to results page
+            # Links to results and site detail pages
             results_url = f"{base_url}/results/{site_id}"
-            st.markdown(f"[🔍 View AI Analysis Results for Site {site_id}]({results_url})")
+            site_detail_url = f"/Site_Detail?site_id={site_id}"
+            
+            col1, col2 = st.columns(2)
+            with col1:
+                st.markdown(f"[🔍 View AI Analysis Results]({results_url})")
+            with col2:
+                st.markdown(f"[📋 View Site Details]({site_detail_url})")
             
             # Get all feedback for this site
             detailed_feedback = query_df("""
