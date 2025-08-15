@@ -161,7 +161,7 @@ def run():
                 st.write(f"**Site Address:** {site_info['site_address'] or 'Not Available'}")
                 st.write(f"**Total Feedback Entries:** {len(detailed_feedback)}")
                 
-                # Display each feedback entry
+                # Display each feedback entry - INSIDE the site expander
                 for fb_idx, feedback in detailed_feedback.iterrows():
                     with st.expander(f"Feedback #{fb_idx + 1} - Run ID: {feedback['run_id'][:8]}... ({feedback['submitted_at']})", expanded=(fb_idx == 0)):
                         
