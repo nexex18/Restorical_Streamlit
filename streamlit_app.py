@@ -45,100 +45,104 @@ def check_auth():
 
 def build_site_filters_ui():
     """Render site-level filters and return SQL where + params for site_overview."""
-    st.subheader("Filters")
     
-    # Search and Processed filter in the same row
-    search_col, processed_col = st.columns([3, 1])
-    with search_col:
-        q = st.text_input("Search (name, address, site_id)", "")
-    with processed_col:
-        processed_filter = st.selectbox("Processed for age and 3rd party quals", ["All", "Yes", "No"], index=0)
-    
-    c1, c2, c3 = st.columns(3)
-    with c1:
-        has_docs = st.selectbox("Has Documents", ["Any", "Yes", "No"], index=0)
-    with c2:
-        has_narr = st.selectbox("Has Narrative", ["Any", "Yes", "No"], index=0)
-    # Qualification Tier
-    tiers_df = query_df("SELECT DISTINCT COALESCE(qualification_tier,'UNSPECIFIED') AS t FROM site_qualification_results ORDER BY t")
-    tier_opts = ["Any"] + (tiers_df["t"].tolist() if not tiers_df.empty else [])
-    with c3:
-        selected_tier = st.selectbox("Qualification Tier", tier_opts, index=0)
-
-    # Contamination medium filters (no Soil/oil)
-    medium_to_col = {
-        "Groundwater": "groundwater_status",
-        "Surface Water": "surface_water_status",
-        "Air": "air_status",
-        "Sediment": "sediment_status",
-        "Bedrock": "bedrock_status",
-    }
-    media_labels = list(medium_to_col.keys())
-    c4, c5 = st.columns(2)
-    with c4:
-        medium_sel = st.multiselect("Contamination Medium", options=media_labels, default=[])
-    # Build status options from selected media (or all if none selected)
-    sel_cols = [medium_to_col[m] for m in medium_sel] if medium_sel else list(medium_to_col.values())
-    union_sql = " UNION ".join([f"SELECT {c} AS s FROM site_contaminants" for c in sel_cols])
-    status_opts_df = query_df(
-        f"SELECT DISTINCT s AS status FROM ({union_sql}) t WHERE s IS NOT NULL AND TRIM(s) <> '' ORDER BY status"
-    )
-    status_opts = status_opts_df["status"].tolist()
-    with c5:
-        medium_status_sel = st.multiselect("Medium Status", options=status_opts, default=[])
-    
-    # Global stats for numeric sliders from site_summary
-    stats = query_df(
-        """
-        SELECT 
-          MIN(COALESCE(total_narrative_sections,0)) AS narr_min,
-          MAX(COALESCE(total_narrative_sections,0)) AS narr_max,
-          MIN(COALESCE(total_documents,0)) AS docs_min,
-          MAX(COALESCE(total_documents,0)) AS docs_max,
-          MIN(COALESCE(document_date_range_years,0)) AS span_min,
-          MAX(COALESCE(document_date_range_years,0)) AS span_max
-        FROM site_summary
-        """
-    )
-    if stats.empty:
-        narr_min = narr_max = 0
-        docs_min = docs_max = 0
-        span_min = span_max = 0
-    else:
-        r = stats.iloc[0]
-        narr_min, narr_max = int(r.narr_min or 0), int(r.narr_max or 0)
-        docs_min, docs_max = int(r.docs_min or 0), int(r.docs_max or 0)
-        span_min, span_max = int(r.span_min or 0), int(r.span_max or 0)
-
-    st.markdown("Numeric filters (site_summary):")
-    n1, n2, n3 = st.columns(3)
-    # Ensure sliders have a valid range even when min==max
-    narr_max_eff = narr_max if narr_max > narr_min else narr_min + 1
-    docs_max_eff = docs_max if docs_max > docs_min else docs_min + 1
-    span_max_eff = span_max if span_max > span_min else span_min + 1
-
-    with n1:
-        narr_range = st.slider(
-            "# of Narratives",
-            min_value=narr_min,
-            max_value=narr_max_eff,
-            value=(narr_min, narr_max if narr_max > narr_min else narr_min + 1),
+    # Create an expander for filters to save space
+    with st.expander("🔍 Filters", expanded=True):
+        # Search and Processed filter in the same row
+        search_col, processed_col = st.columns([3, 1])
+        with search_col:
+            q = st.text_input("Search (name, address, site_id)", "", key="search_input")
+        with processed_col:
+            processed_filter = st.selectbox("Processed for qualification", ["All", "Yes", "No"], index=0, key="processed_select")
+        
+        # Combine all dropdowns in one row with 3 columns
+        c1, c2, c3 = st.columns(3)
+        with c1:
+            has_docs = st.selectbox("Has Docs", ["Any", "Yes", "No"], index=0, key="has_docs_select")
+        with c2:
+            has_narr = st.selectbox("Has Narrative", ["Any", "Yes", "No"], index=0, key="has_narr_select")
+        # Qualification Tier
+        tiers_df = query_df("SELECT DISTINCT COALESCE(qualification_tier,'UNSPECIFIED') AS t FROM site_qualification_results ORDER BY t")
+        tier_opts = ["Any"] + (tiers_df["t"].tolist() if not tiers_df.empty else [])
+        with c3:
+            selected_tier = st.selectbox("Qual Tier", tier_opts, index=0, key="tier_select")
+        
+        # Contamination medium filters in one row
+        medium_to_col = {
+            "Groundwater": "groundwater_status",
+            "Surface Water": "surface_water_status",
+            "Air": "air_status",
+            "Sediment": "sediment_status",
+            "Bedrock": "bedrock_status",
+        }
+        media_labels = list(medium_to_col.keys())
+        c5, c6 = st.columns(2)
+        with c5:
+            medium_sel = st.multiselect("Contamination Medium", options=media_labels, default=[], key="medium_select")
+        # Build status options from selected media (or all if none selected)
+        sel_cols = [medium_to_col[m] for m in medium_sel] if medium_sel else list(medium_to_col.values())
+        union_sql = " UNION ".join([f"SELECT {c} AS s FROM site_contaminants" for c in sel_cols])
+        status_opts_df = query_df(
+            f"SELECT DISTINCT s AS status FROM ({union_sql}) t WHERE s IS NOT NULL AND TRIM(s) <> '' ORDER BY status"
         )
-    with n2:
-        docs_range = st.slider(
-            "# of Documents",
-            min_value=docs_min,
-            max_value=docs_max_eff,
-            value=(docs_min, docs_max if docs_max > docs_min else docs_min + 1),
+        status_opts = status_opts_df["status"].tolist()
+        with c6:
+            medium_status_sel = st.multiselect("Medium Status", options=status_opts, default=[], key="status_select")
+        
+        # Global stats for numeric sliders from site_summary
+        stats = query_df(
+            """
+            SELECT 
+              MIN(COALESCE(total_narrative_sections,0)) AS narr_min,
+              MAX(COALESCE(total_narrative_sections,0)) AS narr_max,
+              MIN(COALESCE(total_documents,0)) AS docs_min,
+              MAX(COALESCE(total_documents,0)) AS docs_max,
+              MIN(COALESCE(document_date_range_years,0)) AS span_min,
+              MAX(COALESCE(document_date_range_years,0)) AS span_max
+            FROM site_summary
+            """
         )
-    with n3:
-        span_range = st.slider(
-            "Year Span of Documents",
-            min_value=span_min,
-            max_value=span_max_eff,
-            value=(span_min, span_max if span_max > span_min else span_min + 1),
-        )
-    apply_to_dashboard = st.checkbox("Apply filters to metrics and charts", value=True)
+        if stats.empty:
+            narr_min = narr_max = 0
+            docs_min = docs_max = 0
+            span_min = span_max = 0
+        else:
+            r = stats.iloc[0]
+            narr_min, narr_max = int(r.narr_min or 0), int(r.narr_max or 0)
+            docs_min, docs_max = int(r.docs_min or 0), int(r.docs_max or 0)
+            span_min, span_max = int(r.span_min or 0), int(r.span_max or 0)
+        
+        # Numeric sliders in a compact layout
+        n1, n2, n3 = st.columns(3)
+        # Ensure sliders have a valid range even when min==max
+        narr_max_eff = narr_max if narr_max > narr_min else narr_min + 1
+        docs_max_eff = docs_max if docs_max > docs_min else docs_min + 1
+        span_max_eff = span_max if span_max > span_min else span_min + 1
+        
+        with n1:
+            narr_range = st.slider(
+                "Narratives",
+                min_value=narr_min,
+                max_value=narr_max_eff,
+                value=(narr_min, narr_max if narr_max > narr_min else narr_min + 1),
+                key="narr_slider"
+            )
+        with n2:
+            docs_range = st.slider(
+                "Documents",
+                min_value=docs_min,
+                max_value=docs_max_eff,
+                value=(docs_min, docs_max if docs_max > docs_min else docs_min + 1),
+                key="docs_slider"
+            )
+        with n3:
+            span_range = st.slider(
+                "Year Span",
+                min_value=span_min,
+                max_value=span_max_eff,
+                value=(span_min, span_max if span_max > span_min else span_min + 1),
+                key="span_slider"
+            )
 
     where, params = [], []
     if q:
@@ -229,7 +233,7 @@ def build_site_filters_ui():
         params += [int(span_range[0]), int(span_range[1])]
 
     where_sql = ("WHERE " + " AND ".join(where)) if where else ""
-    return where_sql, params, apply_to_dashboard
+    return where_sql, params
 
 
 def metric_row(where_sql: str, params: list):
@@ -706,13 +710,52 @@ def main():
 
     st.caption("Analytics UI for exploring narratives, documents, qualifications, contaminants, and more.")
 
-    where_sql, params, apply_to_dashboard = build_site_filters_ui()
+    where_sql, params = build_site_filters_ui()
 
-    # Metrics
-    metric_row(where_sql if apply_to_dashboard else "", params if apply_to_dashboard else [])
-
-    # Docs summary metrics
-    docs_summary(where_sql if apply_to_dashboard else "", params if apply_to_dashboard else [])
+    # Combined metrics row - sites metrics and docs metrics together
+    col1, col2, col3, col4, col5, col6, col7 = st.columns(7)
+    
+    # Get site metrics
+    sql = f"""
+        WITH filtered_sites AS (
+          SELECT site_id FROM site_overview {where_sql}
+        )
+        SELECT 
+          (SELECT COUNT(*) FROM filtered_sites) AS total_sites,
+          (SELECT COUNT(*) FROM filtered_sites fs JOIN site_summary ss USING(site_id) WHERE COALESCE(ss.has_narrative_content,0)=1) AS sites_with_narratives,
+          (SELECT COUNT(*) FROM filtered_sites fs JOIN site_summary ss USING(site_id) WHERE COALESCE(ss.has_documents,0)=1) AS sites_with_documents,
+          (SELECT COUNT(DISTINCT sqr.site_id) FROM site_qualification_results sqr JOIN filtered_sites fs ON fs.site_id=sqr.site_id WHERE COALESCE(sqr.qualified,0)=1) AS qualified_sites
+    """
+    m = query_df(sql, params).iloc[0]
+    
+    # Get docs metrics
+    docs_sql = f"""
+        WITH filtered_sites AS (
+          SELECT site_id FROM site_overview {where_sql}
+        )
+        SELECT COUNT(*) AS documents,
+               SUM(CASE WHEN download_status='success' THEN 1 ELSE 0 END) AS downloaded,
+               SUM(CASE WHEN flagged_for_analysis THEN 1 ELSE 0 END) AS flagged
+        FROM site_documents
+        WHERE site_id IN (SELECT site_id FROM filtered_sites)
+    """
+    docs = query_df(docs_sql, params).iloc[0]
+    
+    # Display all metrics in one row
+    with col1:
+        st.metric("Sites", f"{int(m.total_sites):,}")
+    with col2:
+        st.metric("w/ Narr", f"{int(m.sites_with_narratives):,}")
+    with col3:
+        st.metric("w/ Docs", f"{int(m.sites_with_documents):,}")
+    with col4:
+        st.metric("Qualified", f"{int(m.qualified_sites):,}")
+    with col5:
+        st.metric("Docs", f"{int(docs.documents or 0):,}")
+    with col6:
+        st.metric("Downloaded", f"{int(docs.downloaded or 0):,}")
+    with col7:
+        st.metric("Flagged for analysis", f"{int(docs.flagged or 0):,}")
 
     st.divider()
     st.subheader("Recent Site Overview")
