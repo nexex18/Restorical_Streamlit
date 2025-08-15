@@ -500,6 +500,21 @@ def overview_table(where_sql: str, params: list):
         )
         tier_map = {str(r.site_id): (r.tier or 'UNSPECIFIED') for _, r in tier_rows.iterrows()} if not tier_rows.empty else {}
 
+        # Get feedback counts per site
+        feedback_rows = query_df(
+            f"""
+            WITH filtered_sites AS (
+              SELECT site_id FROM site_overview {where_sql}
+            )
+            SELECT site_id, COUNT(*) as feedback_count
+            FROM ai_feedback
+            WHERE site_id IN (SELECT site_id FROM filtered_sites)
+            GROUP BY site_id
+            """,
+            params,
+        )
+        feedback_map = {str(r.site_id): int(r.feedback_count) for _, r in feedback_rows.iterrows()} if not feedback_rows.empty else {}
+
         # Add link to Site Detail page using query params
         try:
             detail_col = df["site_id"].astype(str).apply(lambda sid: f"/Site_Detail?site_id={sid}")
@@ -637,6 +652,16 @@ def overview_table(where_sql: str, params: list):
         
         qc_links = df_display.apply(make_qc_link, axis=1)
         df_display.insert(insert_pos + 3, "QC", qc_links)
+        
+        # Add Feedback count column
+        try:
+            feedback_counts = df_display["site_id"].astype(str).map(lambda sid: feedback_map.get(sid, 0))
+        except Exception:
+            feedback_counts = df_display["site_id"].map(lambda sid: feedback_map.get(str(sid), 0))
+        
+        # Format feedback display - show count or empty if 0
+        feedback_display = feedback_counts.apply(lambda count: f"📝 {count}" if count > 0 else "")
+        df_display.insert(insert_pos + 4, "Feedback", feedback_display)
 
         st.dataframe(
             df_display,
@@ -668,6 +693,10 @@ def overview_table(where_sql: str, params: list):
                     label="QC",
                     display_text="QC",
                     help="View qualification results for processed sites"
+                ),
+                "Feedback": st.column_config.TextColumn(
+                    label="Feedback",
+                    help="Number of feedback entries for this site"
                 ),
             },
         )
