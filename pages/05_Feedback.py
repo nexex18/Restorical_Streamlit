@@ -18,15 +18,29 @@ def run():
     try:
         # Try with score columns if they exist
         feedback_summary = query_df("""
-            WITH latest_feedback AS (
+            WITH latest_scores AS (
                 SELECT 
                     af.site_id,
-                    af.age_correct,
-                    af.third_party_correct,
                     af.age_score,
                     af.third_party_score,
                     ROW_NUMBER() OVER (PARTITION BY af.site_id ORDER BY af.submitted_at DESC) as rn
                 FROM ai_feedback af
+            ),
+            latest_age_feedback AS (
+                SELECT 
+                    af.site_id,
+                    af.age_correct,
+                    ROW_NUMBER() OVER (PARTITION BY af.site_id ORDER BY af.submitted_at DESC) as rn
+                FROM ai_feedback af
+                WHERE af.age_correct IS NOT NULL
+            ),
+            latest_tp_feedback AS (
+                SELECT 
+                    af.site_id,
+                    af.third_party_correct,
+                    ROW_NUMBER() OVER (PARTITION BY af.site_id ORDER BY af.submitted_at DESC) as rn
+                FROM ai_feedback af
+                WHERE af.third_party_correct IS NOT NULL
             )
             SELECT 
                 af.site_id,
@@ -37,28 +51,45 @@ def run():
                 SUM(CASE WHEN af.age_correct = 1 THEN 1 ELSE 0 END) as age_correct_count,
                 SUM(CASE WHEN af.third_party_correct = 1 THEN 1 ELSE 0 END) as third_party_correct_count,
                 SUM(CASE WHEN af.document_selection_correct = 1 THEN 1 ELSE 0 END) as doc_correct_count,
-                -- Get the values from the most recent feedback only
-                MAX(lf.age_score) as age_score,
-                MAX(lf.third_party_score) as third_party_score,
-                MAX(lf.age_correct) as latest_age_correct,
-                MAX(lf.third_party_correct) as latest_third_party_correct
+                -- Get the latest scores (even if null)
+                MAX(ls.age_score) as age_score,
+                MAX(ls.third_party_score) as third_party_score,
+                -- Get the latest non-null feedback values
+                MAX(laf.age_correct) as latest_age_correct,
+                MAX(ltf.third_party_correct) as latest_third_party_correct
             FROM ai_feedback af
             LEFT JOIN site_overview so ON af.site_id = so.site_id
-            LEFT JOIN latest_feedback lf ON af.site_id = lf.site_id AND lf.rn = 1
+            LEFT JOIN latest_scores ls ON af.site_id = ls.site_id AND ls.rn = 1
+            LEFT JOIN latest_age_feedback laf ON af.site_id = laf.site_id AND laf.rn = 1
+            LEFT JOIN latest_tp_feedback ltf ON af.site_id = ltf.site_id AND ltf.rn = 1
             GROUP BY af.site_id, so.site_name, so.site_address
             ORDER BY latest_feedback DESC
         """)
     except:
         # Fallback if score columns don't exist - get scores from orchestration runs
         feedback_summary = query_df("""
-            WITH latest_feedback AS (
+            WITH latest_run AS (
                 SELECT 
                     af.site_id,
                     af.run_id,
+                    ROW_NUMBER() OVER (PARTITION BY af.site_id ORDER BY af.submitted_at DESC) as rn
+                FROM ai_feedback af
+            ),
+            latest_age_feedback AS (
+                SELECT 
+                    af.site_id,
                     af.age_correct,
+                    ROW_NUMBER() OVER (PARTITION BY af.site_id ORDER BY af.submitted_at DESC) as rn
+                FROM ai_feedback af
+                WHERE af.age_correct IS NOT NULL
+            ),
+            latest_tp_feedback AS (
+                SELECT 
+                    af.site_id,
                     af.third_party_correct,
                     ROW_NUMBER() OVER (PARTITION BY af.site_id ORDER BY af.submitted_at DESC) as rn
                 FROM ai_feedback af
+                WHERE af.third_party_correct IS NOT NULL
             )
             SELECT 
                 af.site_id,
@@ -70,14 +101,16 @@ def run():
                 SUM(CASE WHEN af.third_party_correct = 1 THEN 1 ELSE 0 END) as third_party_correct_count,
                 SUM(CASE WHEN af.document_selection_correct = 1 THEN 1 ELSE 0 END) as doc_correct_count,
                 -- Get scores from the most recent feedback's run
-                MAX(CASE WHEN lf.rn = 1 THEN scores.age_score END) as age_score,
-                MAX(CASE WHEN lf.rn = 1 THEN scores.third_party_score END) as third_party_score,
-                -- Get correct/incorrect from the most recent feedback only
-                MAX(CASE WHEN lf.rn = 1 THEN lf.age_correct END) as latest_age_correct,
-                MAX(CASE WHEN lf.rn = 1 THEN lf.third_party_correct END) as latest_third_party_correct
+                MAX(CASE WHEN lr.rn = 1 THEN scores.age_score END) as age_score,
+                MAX(CASE WHEN lr.rn = 1 THEN scores.third_party_score END) as third_party_score,
+                -- Get the latest non-null feedback values
+                MAX(laf.age_correct) as latest_age_correct,
+                MAX(ltf.third_party_correct) as latest_third_party_correct
             FROM ai_feedback af
             LEFT JOIN site_overview so ON af.site_id = so.site_id
-            LEFT JOIN latest_feedback lf ON af.site_id = lf.site_id
+            LEFT JOIN latest_run lr ON af.site_id = lr.site_id AND lr.rn = 1
+            LEFT JOIN latest_age_feedback laf ON af.site_id = laf.site_id AND laf.rn = 1
+            LEFT JOIN latest_tp_feedback ltf ON af.site_id = ltf.site_id AND ltf.rn = 1
             LEFT JOIN (
                 -- Extract scores from orchestration module results
                 SELECT 
@@ -86,7 +119,7 @@ def run():
                     json_extract(omr.module_result_json, '$.data.third_party_impact_score') as third_party_score
                 FROM orchestration_module_results omr
                 WHERE omr.module_name LIKE '%Score Calculation%'
-            ) scores ON lf.run_id = scores.run_id AND lf.rn = 1
+            ) scores ON lr.run_id = scores.run_id
             GROUP BY af.site_id, so.site_name, so.site_address
             ORDER BY latest_feedback DESC
         """)
