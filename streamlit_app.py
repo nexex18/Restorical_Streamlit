@@ -9,6 +9,9 @@ from app_lib.db import query_df, db_exists, DB_PATH
 
 st.set_page_config(page_title="Eco Site Analytics", page_icon="📊", layout="wide")
 
+# URL prefix for deployment behind nginx (e.g., '/streamlit')
+URL_PREFIX = os.environ.get('URL_PREFIX', '')
+
 # Authentication
 def check_auth():
     """Check if user is authenticated"""
@@ -517,9 +520,9 @@ def overview_table(where_sql: str, params: list):
 
         # Add link to Site Detail page using query params
         try:
-            detail_col = df["site_id"].astype(str).apply(lambda sid: f"/Site_Detail?site_id={sid}")
+            detail_col = df["site_id"].astype(str).apply(lambda sid: f"{URL_PREFIX}/Site_Detail?site_id={sid}")
         except Exception:
-            detail_col = df["site_id"].apply(lambda sid: f"/Site_Detail?site_id={sid}")
+            detail_col = df["site_id"].apply(lambda sid: f"{URL_PREFIX}/Site_Detail?site_id={sid}")
         df_display = df.copy()
         df_display.insert(0, "Site Detail", detail_col)
 

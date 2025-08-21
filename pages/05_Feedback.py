@@ -6,6 +6,9 @@ import os
 
 st.set_page_config(page_title="Feedback", page_icon="📝", layout="wide")
 
+# URL prefix for deployment behind nginx (e.g., '/streamlit')
+URL_PREFIX = os.environ.get('URL_PREFIX', '')
+
 def run():
     if not db_exists():
         st.error("Database not found")
@@ -193,7 +196,7 @@ def run():
         with st.expander(f"**Site {site_id}** - {site_name[:50]}... | Age: {age_score} {age_feedback} | 3rd Party: {tp_score} {tp_feedback} | Feedbacks: {int(actual_count)}", expanded=should_expand):
             # Links to results and site detail pages
             results_url = f"{base_url}/results/{site_id}"
-            site_detail_url = f"/Site_Detail?site_id={site_id}"
+            site_detail_url = f"{URL_PREFIX}/Site_Detail?site_id={site_id}"
             
             col1, col2 = st.columns(2)
             with col1:
