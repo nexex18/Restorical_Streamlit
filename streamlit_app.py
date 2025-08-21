@@ -648,7 +648,7 @@ def overview_table(where_sql: str, params: list):
                     return ""  # Not processed, no QC link
                 else:
                     # Has a score (including 0), show QC link to view results
-                    base_url = os.environ.get("PROCESS_API_BASE", "http://localhost:5001").rstrip("/")
+                    base_url = os.environ.get("PUBLIC_FASTHTML_URL", "/fasthtml").rstrip("/")
                     return f"{base_url}/results/{site_id}"
             except:
                 return ""
@@ -719,7 +719,7 @@ def main():
     check_auth()
     
     # Add button linking to FastHTML application
-    base_url = os.environ.get("PROCESS_API_BASE", "http://localhost:5001").rstrip("/")
+    base_url = os.environ.get("PUBLIC_FASTHTML_URL", "/fasthtml").rstrip("/")
     st.markdown(f'''
     <div style="text-align: right; margin-bottom: -30px;">
         <a href="{base_url}" target="_blank" style="text-decoration: none;">

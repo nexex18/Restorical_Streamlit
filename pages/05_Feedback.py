@@ -174,7 +174,7 @@ def run():
     auto_expand_site = query_params.get("site_id", None)
     
     # Create expandable rows for each site with feedback
-    base_url = os.environ.get("PROCESS_API_BASE", "http://localhost:5001").rstrip("/")
+    base_url = os.environ.get("PUBLIC_FASTHTML_URL", "/fasthtml").rstrip("/")
     
     for idx, row in feedback_summary.iterrows():
         site_id = row['site_id']
