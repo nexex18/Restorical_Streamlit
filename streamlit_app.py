@@ -663,7 +663,7 @@ def overview_table(where_sql: str, params: list):
                 count = feedback_map.get(site_id, 0)
                 if count > 0:
                     # Return the link for LinkColumn
-                    return f"/Feedback?site_id={site_id}"
+                    return f"{URL_PREFIX}/Feedback?site_id={site_id}"
                 else:
                     return ""
             except:
