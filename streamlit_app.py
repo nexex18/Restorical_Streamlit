@@ -61,7 +61,7 @@ def build_site_filters_ui():
             with search_col1:
                 q = st.text_input("Search (name, address, site_id)", "", key="search_input")
             with search_col2:
-                doc_search = st.text_input("Search Document Names", "", key="doc_search_input")
+                doc_search = st.text_input("Search By Document Name", "", key="doc_search_input")
             
             # Document and narrative filters
             c1, c2 = st.columns(2)

@@ -49,7 +49,7 @@ def run():
     st.caption("Filter, search, and export sites with associated metadata.")
 
     q = st.text_input("Search (name, address, site_id)", "")
-    doc_search = st.text_input("Search Document Names", "")
+    doc_search = st.text_input("Search By Document Name", "")
     c1, c2, c3 = st.columns(3)
     with c1:
         has_docs = st.selectbox("Has Documents", ["Any", "Yes", "No"], index=0)
