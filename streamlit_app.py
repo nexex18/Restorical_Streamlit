@@ -56,8 +56,12 @@ def build_site_filters_ui():
         
         # Left column - All other filters
         with left_col:
-            # Search bar at the top
-            q = st.text_input("Search (name, address, site_id)", "", key="search_input")
+            # Search bars at the top - two columns
+            search_col1, search_col2 = st.columns(2)
+            with search_col1:
+                q = st.text_input("Search (name, address, site_id)", "", key="search_input")
+            with search_col2:
+                doc_search = st.text_input("Search Document Names", "", key="doc_search_input")
             
             # Document and narrative filters
             c1, c2 = st.columns(2)
@@ -157,6 +161,13 @@ def build_site_filters_ui():
         like = f"%{q}%"
         where.append("(COALESCE(site_name,'') LIKE ? OR COALESCE(site_address,'') LIKE ? OR site_id LIKE ?)")
         params += [like, like, like]
+    if doc_search:
+        where.append("""EXISTS (
+            SELECT 1 FROM site_documents sd
+            WHERE sd.site_id = site_overview.site_id
+            AND LOWER(sd.document_title) LIKE LOWER(?)
+        )""")
+        params.append(f"%{doc_search}%")
     if has_docs != "Any":
         where.append("has_documents = ?")
         params.append(1 if has_docs == "Yes" else 0)
@@ -452,13 +463,13 @@ def overview_table(where_sql: str, params: list):
               WHERE or1.site_id IN (SELECT site_id FROM filtered_sites)
                 AND or1.completed_at IS NOT NULL
             ), picked AS (
-              SELECT l1.site_id, l1.run_id, l1.run_final_score
+              SELECT l1.site_id, l1.run_id, l1.run_final_score, l1.completed_at
               FROM lr l1
               JOIN (
                 SELECT site_id, MAX(completed_at) AS mc FROM lr GROUP BY site_id
               ) m ON m.site_id = l1.site_id AND m.mc = l1.completed_at
             )
-            SELECT p.site_id, p.run_final_score, omr.module_result_json
+            SELECT p.site_id, p.run_final_score, p.completed_at, omr.module_result_json
             FROM picked p
             LEFT JOIN orchestration_module_results omr
               ON omr.run_id = p.run_id AND omr.module_name LIKE '%Score Calculation%'
@@ -466,6 +477,7 @@ def overview_table(where_sql: str, params: list):
             params,
         )
         score_map = {}
+        last_processed_map = {}
         if not score_rows.empty:
             import json as _json
             for _, r in score_rows.iterrows():
@@ -480,6 +492,9 @@ def overview_table(where_sql: str, params: list):
                     final_score = int(r.run_final_score or 0)
                 sid = str(r.site_id)
                 score_map[sid] = final_score
+                # Store the completed_at timestamp
+                if r.completed_at:
+                    last_processed_map[sid] = pd.to_datetime(r.completed_at).strftime('%Y-%m-%d %H:%M')
 
         # Compute latest Qualification Tier per site
         tier_rows = query_df(
@@ -526,19 +541,26 @@ def overview_table(where_sql: str, params: list):
         df_display = df.copy()
         df_display.insert(0, "Site Detail", detail_col)
 
-        # Insert Final Score as the 3rd column (after site_name)
+        # Insert Last Processed as the 3rd column (after site_name)
+        try:
+            last_processed = df_display["site_id"].astype(str).map(lambda sid: last_processed_map.get(sid, None))
+        except Exception:
+            last_processed = df_display["site_id"].map(lambda sid: last_processed_map.get(str(sid), None))
+        insert_pos = 3  # 0: Site Detail, 1: site_id, 2: site_name, 3: Last Processed
+        df_display.insert(insert_pos, "Last Processed", last_processed)
+
+        # Insert Final Score as the 4th column (after Last Processed)
         try:
             overall_scores = df_display["site_id"].astype(str).map(lambda sid: score_map.get(sid, None))
         except Exception:
             overall_scores = df_display["site_id"].map(lambda sid: score_map.get(str(sid), None))
-        insert_pos = 3  # 0: Site Detail, 1: site_id, 2: site_name, 3: Final Score
-        df_display.insert(insert_pos, "Final Score", overall_scores)
+        df_display.insert(insert_pos + 1, "Final Score", overall_scores)
         # Insert Qualification Tier right after Final Score
         try:
             tiers = df_display["site_id"].astype(str).map(lambda sid: tier_map.get(sid, None))
         except Exception:
             tiers = df_display["site_id"].map(lambda sid: tier_map.get(str(sid), None))
-        df_display.insert(insert_pos + 1, "Qualification Tier", tiers)
+        df_display.insert(insert_pos + 2, "Qualification Tier", tiers)
 
         # Add per-row Process link for sites with Final Score == 0
         api_base = os.environ.get("PROCESS_API_BASE", "http://localhost:5001").rstrip("/")
@@ -636,7 +658,7 @@ def overview_table(where_sql: str, params: list):
             
             process_links = df_display.apply(make_process_link, axis=1)
 
-        df_display.insert(insert_pos + 2, "Process", process_links)
+        df_display.insert(insert_pos + 3, "Process", process_links)
         
         # Add QC column for processed sites
         def make_qc_link(r):
@@ -654,7 +676,7 @@ def overview_table(where_sql: str, params: list):
                 return ""
         
         qc_links = df_display.apply(make_qc_link, axis=1)
-        df_display.insert(insert_pos + 3, "QC", qc_links)
+        df_display.insert(insert_pos + 4, "QC", qc_links)
         
         # Add Feedback count column with links
         def make_feedback_cell(r):
@@ -670,7 +692,7 @@ def overview_table(where_sql: str, params: list):
                 return ""
         
         feedback_links = df_display.apply(make_feedback_cell, axis=1)
-        df_display.insert(insert_pos + 4, "Feedback", feedback_links)
+        df_display.insert(insert_pos + 5, "Feedback", feedback_links)
 
         st.dataframe(
             df_display,
@@ -680,6 +702,10 @@ def overview_table(where_sql: str, params: list):
                 "Site Detail": st.column_config.LinkColumn(
                     label="Site Detail",
                     display_text="Open",
+                ),
+                "Last Processed": st.column_config.TextColumn(
+                    label="Last Processed",
+                    help="Date and time when site was last processed",
                 ),
                 "Final Score": st.column_config.NumberColumn(
                     label="Final Score",
