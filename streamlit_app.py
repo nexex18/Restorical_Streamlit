@@ -670,8 +670,16 @@ def overview_table(where_sql: str, params: list):
                     return ""  # Not processed, no QC link
                 else:
                     # Has a score (including 0), show QC link to view results
-                    base_url = os.environ.get("PUBLIC_FASTHTML_URL", "/fasthtml").rstrip("/")
-                    return f"{base_url}/results/{site_id}"
+                    # Use URL_PREFIX to ensure we have a complete URL
+                    fasthtml_path = os.environ.get("PUBLIC_FASTHTML_URL", "/fasthtml").rstrip("/")
+                    # If URL_PREFIX is set, use it as the base (includes domain)
+                    # Otherwise construct from current request URL
+                    if URL_PREFIX:
+                        # URL_PREFIX includes the domain, append the fasthtml path
+                        return f"{URL_PREFIX}{fasthtml_path}/results/{site_id}"
+                    else:
+                        # Fallback to relative URL with fasthtml path
+                        return f"{fasthtml_path}/results/{site_id}"
             except:
                 return ""
         
