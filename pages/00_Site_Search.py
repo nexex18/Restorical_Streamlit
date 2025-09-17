@@ -7,7 +7,7 @@ import time
 
 from app_lib.db import query_df, db_exists, DB_PATH
 
-st.set_page_config(page_title="Eco Site Analytics", page_icon="📊", layout="wide")
+st.set_page_config(page_title="Site Search", page_icon="🔍", layout="wide")
 
 # URL prefix for deployment behind nginx (e.g., '/streamlit')
 URL_PREFIX = os.environ.get('URL_PREFIX', '')
@@ -32,8 +32,7 @@ def check_auth():
                 AUTH_TOKEN = os.environ.get('AUTH_TOKEN', 'secret123')
                 if password == AUTH_TOKEN:
                     st.session_state.authenticated = True
-                    # Redirect to Site Search page after login
-                    st.switch_page("pages/00_Site_Search.py")
+                    st.rerun()
                 else:
                     st.error("❌ Invalid password. Please try again.")
         
@@ -754,9 +753,8 @@ def overview_table(where_sql: str, params: list):
 
 def main():
     import os
-    
-    # Check authentication first
-    check_auth()
+
+    # No authentication check needed for page files
     
     # Add button linking to FastHTML application
     base_url = os.environ.get("PUBLIC_FASTHTML_URL", "/fasthtml").rstrip("/")
@@ -780,7 +778,7 @@ def main():
     </div>
     ''', unsafe_allow_html=True)
     
-    st.title("Scrapped WA Eco Sites 📊")
+    st.title("Site Search 🔍")
     
     # Display the database path - show full absolute path
     full_db_path = os.path.abspath(DB_PATH)

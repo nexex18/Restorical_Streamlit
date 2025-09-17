@@ -57,13 +57,13 @@ def overview_tab(site_id: str):
     st.write("""
     Quick Links:
     """)
-    st.page_link("pages/02_Sites_Explorer.py", label="Open Sites Explorer", icon="🌐")
-    st.page_link("pages/03_Narratives.py", label="Narratives Page", icon="📜")
-    st.page_link("pages/04_Documents.py", label="Documents Page", icon="📄")
-    st.page_link("pages/05_Feedback.py", label="Feedback Page", icon="💬")
-    st.page_link("pages/06_Qualifications.py", label="Qualifications Page", icon="✅")
-    st.page_link("pages/07_Contaminants.py", label="Contaminants Page", icon="🧪")
-    st.page_link("pages/08_Contacts.py", label="Contacts Page", icon="📇")
+    st.page_link("pages/03_Sites_Explorer.py", label="Open Sites Explorer", icon="🌐")
+    st.page_link("pages/04_Narratives.py", label="Narratives Page", icon="📜")
+    st.page_link("pages/05_Documents.py", label="Documents Page", icon="📄")
+    st.page_link("pages/06_Feedback.py", label="Feedback Page", icon="💬")
+    st.page_link("pages/07_Qualifications.py", label="Qualifications Page", icon="✅")
+    st.page_link("pages/08_Contaminants.py", label="Contaminants Page", icon="🧪")
+    st.page_link("pages/09_Contacts.py", label="Contacts Page", icon="📇")
 
     st.markdown("---")
     meta_cols = st.columns(2)
