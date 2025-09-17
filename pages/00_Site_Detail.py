@@ -256,9 +256,14 @@ def qualifications_tab(site_id: str):
         else:
             overall_score = int(run.final_score or 0)
 
-    c1, c2 = st.columns(2)
+    c1, c2, c3 = st.columns(3)
     c1.metric("Overall Tier", overall_tier)
     c2.metric("Overall Score", f"{overall_score}")
+
+    # Add qualification status metric
+    qualification_status = "✅ QUALIFIED" if overall_tier not in ['NOT_QUALIFIED', ''] else "❌ NOT QUALIFIED"
+    status_color = "green" if "QUALIFIED" in qualification_status and "NOT" not in qualification_status else "red"
+    c3.metric("Status", qualification_status)
 
     # Parse evidence JSON from the most recent qualification row + confidence from summary
     # Check if final_recommendation column exists
@@ -278,6 +283,9 @@ def qualifications_tab(site_id: str):
               sqr.age_evidence,
               sqr.third_party_evidence,
               sqr.qualified,
+              sqr.disqualifying_factors,
+              sqr.age_qualified,
+              sqr.third_party_qualified,
               ss.age_evidence_confidence_score,
               ss.third_party_confidence_score,
               ss.age_evidence_source,
@@ -297,6 +305,9 @@ def qualifications_tab(site_id: str):
               sqr.age_evidence,
               sqr.third_party_evidence,
               sqr.qualified,
+              sqr.disqualifying_factors,
+              sqr.age_qualified,
+              sqr.third_party_qualified,
               ss.age_evidence_confidence_score,
               ss.third_party_confidence_score,
               ss.age_evidence_source,
@@ -315,11 +326,25 @@ def qualifications_tab(site_id: str):
     age_src = None
     is_minimal_cleanup = False
     minimal_cleanup_reasons = []
+    disqualifying_factors = []
 
     if not ev.empty:
         r = ev.iloc[0]
 
-        # Check for minimal cleanup disqualification
+        # Parse disqualifying_factors JSON if present
+        if hasattr(r, 'disqualifying_factors') and r.disqualifying_factors:
+            try:
+                disqualifying_factors = json.loads(r.disqualifying_factors)
+                # Check if any factor is MINIMAL_CLEANUP
+                for factor in disqualifying_factors:
+                    if factor.get('reason') == 'MINIMAL_CLEANUP':
+                        is_minimal_cleanup = True
+                        if factor.get('evidence'):
+                            minimal_cleanup_reasons.append(factor.get('evidence'))
+            except Exception:
+                disqualifying_factors = []
+
+        # Check for minimal cleanup disqualification (legacy check)
         if r.final_recommendation == "DISQUALIFIED_MINIMAL_CLEANUP":
             is_minimal_cleanup = True
 
@@ -349,8 +374,77 @@ def qualifications_tab(site_id: str):
         tp_conf = int(r.third_party_confidence_score or 0)
         age_src = r.age_evidence_source
 
-    # Display minimal cleanup warning if applicable
-    if is_minimal_cleanup:
+    # Display qualification summary box if we have the data
+    if not ev.empty and hasattr(r, 'age_qualified') and hasattr(r, 'third_party_qualified'):
+        age_qual_status = r.age_qualified
+        tp_qual_status = r.third_party_qualified
+        overall_qual_status = r.qualified if hasattr(r, 'qualified') else False
+
+        # Create qualification status summary
+        with st.container():
+            st.subheader("📋 Qualification Summary")
+            col1, col2, col3 = st.columns(3)
+
+            # Age qualification status
+            age_icon = "✅" if age_qual_status else "❌"
+            age_text = "PASSED" if age_qual_status else "FAILED"
+            col1.markdown(f"**Age Qualification:** {age_icon} {age_text}")
+
+            # Third-party qualification status
+            tp_icon = "✅" if tp_qual_status else "❌"
+            tp_text = "PASSED" if tp_qual_status else "FAILED"
+            col2.markdown(f"**Third-Party:** {tp_icon} {tp_text}")
+
+            # Overall qualification
+            overall_icon = "✅" if overall_qual_status else "❌"
+            overall_text = "QUALIFIED" if overall_qual_status else "NOT QUALIFIED"
+            col3.markdown(f"**Overall:** {overall_icon} {overall_text}")
+
+            st.divider()
+
+    # Display disqualification details prominently at the top
+    if disqualifying_factors:
+        for factor in disqualifying_factors:
+            category = factor.get('category', 'unknown')
+            reason = factor.get('reason', '')
+            description = factor.get('description', '')
+            evidence = factor.get('evidence', '')
+
+            # Determine the alert type and icon based on reason
+            if reason == 'MINIMAL_CLEANUP':
+                st.error("🚫 **Site Disqualified: Minimal Cleanup/Recovery**")
+                st.markdown(f"**Category:** {category.title()} Qualification")
+                st.markdown(f"**Reason:** {description}")
+                if evidence:
+                    with st.expander("📄 View Supporting Evidence"):
+                        st.info(f'"{evidence}"')
+            elif reason == 'RECENT_CONTAMINATION':
+                st.error("🚫 **Site Disqualified: Recent Contamination**")
+                st.markdown(f"**Category:** {category.title()} Qualification")
+                st.markdown(f"**Reason:** {description}")
+                if evidence:
+                    with st.expander("📄 View Supporting Evidence"):
+                        st.info(f'"{evidence}"')
+            elif reason == 'NO_THIRD_PARTY_IMPACT':
+                st.error("🚫 **Site Disqualified: No Third Party Impact**")
+                st.markdown(f"**Category:** {category.title()} Qualification")
+                st.markdown(f"**Reason:** {description}")
+                if evidence:
+                    with st.expander("📄 View Supporting Evidence"):
+                        st.info(f'"{evidence}"')
+            else:
+                st.warning(f"⚠️ **Site Disqualified**")
+                st.markdown(f"**Category:** {category.title()} Qualification")
+                st.markdown(f"**Reason:** {description or reason}")
+                if evidence:
+                    with st.expander("📄 View Supporting Evidence"):
+                        st.info(f'"{evidence}"')
+
+        # Add a divider after disqualification details
+        st.divider()
+
+    # Legacy display for sites without new disqualifying_factors field
+    elif is_minimal_cleanup:
         st.warning("⚠️ **Site Disqualified: Minimal Cleanup/Recovery**\n\n"
                    "This site has been disqualified because the evidence indicates minimal contamination "
                    "or cleanup/recovery work required. There may be insufficient damages to pursue.")
