@@ -63,7 +63,8 @@ if ps -p $STREAMLIT_PID > /dev/null; then
     
     echo -e "\n${GREEN}=== Restart Successful ===${NC}"
     echo -e "Application is running at:"
-    echo -e "  ${GREEN}http://${PUBLIC_IP}:${SERVER_PORT}${NC}"
+    echo -e "  ${GREEN}http://${PUBLIC_IP}/streamlit/${NC}"
+    echo -e "  (Port ${SERVER_PORT} is blocked - access through Nginx proxy only)"
     echo -e "\nUseful commands:"
     echo -e "  View logs:        ${YELLOW}tail -f streamlit.log${NC}"
     echo -e "  Check status:     ${YELLOW}ps aux | grep streamlit${NC}"

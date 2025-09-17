@@ -93,9 +93,12 @@ def build_site_filters_ui():
                 medium_status_sel = st.multiselect("Medium Status", options=status_opts, default=[], key="status_select")
             
             # Global stats for numeric sliders from site_summary
-            stats = query_df(
-                """
-                SELECT 
+            # Cache the global stats query
+            @st.cache_data(ttl=600)
+            def get_global_stats():
+                return query_df(
+                    """
+                    SELECT 
                   MIN(COALESCE(total_narrative_sections,0)) AS narr_min,
                   MAX(COALESCE(total_narrative_sections,0)) AS narr_max,
                   MIN(COALESCE(total_documents,0)) AS docs_min,
@@ -103,8 +106,9 @@ def build_site_filters_ui():
                   MIN(COALESCE(document_date_range_years,0)) AS span_min,
                   MAX(COALESCE(document_date_range_years,0)) AS span_max
                 FROM site_summary
-                """
-            )
+                    """
+                )
+            stats = get_global_stats()
             if stats.empty:
                 narr_min = narr_max = 0
                 docs_min = docs_max = 0
@@ -255,25 +259,30 @@ def build_site_filters_ui():
     return where_sql, params
 
 
-def metric_row(where_sql: str, params: list):
-    cols = st.columns(4)
+@st.cache_data(ttl=60)  # Cache for 1 minute
+def get_metrics(where_sql: str, params: tuple):  # tuple for hashability
     sql = f"""
         WITH filtered_sites AS (
           SELECT site_id FROM site_overview {where_sql}
         )
-        SELECT 
+        SELECT
           (SELECT COUNT(*) FROM filtered_sites) AS total_sites,
           (SELECT COUNT(*) FROM filtered_sites fs JOIN site_summary ss USING(site_id) WHERE COALESCE(ss.has_narrative_content,0)=1) AS sites_with_narratives,
           (SELECT COUNT(*) FROM filtered_sites fs JOIN site_summary ss USING(site_id) WHERE COALESCE(ss.has_documents,0)=1) AS sites_with_documents,
           (SELECT COUNT(DISTINCT sqr.site_id) FROM site_qualification_results sqr JOIN filtered_sites fs ON fs.site_id=sqr.site_id WHERE COALESCE(sqr.qualified,0)=1) AS qualified_sites
     """
-    m = query_df(sql, params).iloc[0]
+    return query_df(sql, list(params)).iloc[0]
+
+def metric_row(where_sql: str, params: list):
+    cols = st.columns(4)
+    m = get_metrics(where_sql, tuple(params))  # Convert to tuple for caching
     cols[0].metric("Total Sites", f"{int(m.total_sites):,}")
     cols[1].metric("Sites w/ Narratives", f"{int(m.sites_with_narratives):,}")
     cols[2].metric("Sites w/ Documents", f"{int(m.sites_with_documents):,}")
     cols[3].metric("Qualified Sites", f"{int(m.qualified_sites):,}")
 
 
+@st.cache_data(ttl=300)  # Cache for 5 minutes
 def tier_chart(where_sql: str, params: list):
     df = query_df(
         f"""
@@ -297,6 +306,7 @@ def tier_chart(where_sql: str, params: list):
     st.plotly_chart(fig, use_container_width=True)
 
 
+@st.cache_data(ttl=300)  # Cache for 5 minutes
 def contaminant_chart(where_sql: str, params: list):
     df = query_df(
         f"""
@@ -321,6 +331,7 @@ def contaminant_chart(where_sql: str, params: list):
     st.plotly_chart(fig, use_container_width=True)
 
 
+@st.cache_data(ttl=300)  # Cache for 5 minutes
 def docs_summary(where_sql: str, params: list):
     df = query_df(
         f"""
@@ -344,6 +355,7 @@ def docs_summary(where_sql: str, params: list):
     cols[2].metric("Flagged", f"{int(row.flagged or 0):,}")
 
 
+@st.cache_data(ttl=120)  # Cache for 2 minutes to improve performance
 def overview_table(where_sql: str, params: list):
     # Create a hash of the current filter state to detect changes
     import hashlib
