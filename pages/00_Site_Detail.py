@@ -5,6 +5,7 @@ from app_lib.db import query_df, db_exists
 st.set_page_config(page_title="Site Detail", page_icon="🧭", layout="wide")
 
 
+@st.cache_data(ttl=3600)  # Cache for 1 hour
 def site_options():
     df = query_df(
         """
