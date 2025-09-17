@@ -261,28 +261,68 @@ def qualifications_tab(site_id: str):
     c2.metric("Overall Score", f"{overall_score}")
 
     # Parse evidence JSON from the most recent qualification row + confidence from summary
-    ev = query_df(
-        """
-        SELECT 
-          sqr.age_evidence,
-          sqr.third_party_evidence,
-          ss.age_evidence_confidence_score,
-          ss.third_party_confidence_score,
-          ss.age_evidence_source
-        FROM site_qualification_results sqr
-        LEFT JOIN site_summary ss ON ss.site_id = sqr.site_id
-        WHERE sqr.site_id = ?
-        ORDER BY sqr.analyzed_at DESC
-        LIMIT 1
-        """,
-        [site_id],
+    # Check if final_recommendation column exists
+    check_col = query_df(
+        "SELECT sql FROM sqlite_master WHERE type='table' AND name='site_summary'"
     )
+    has_final_recommendation = False
+    if not check_col.empty:
+        table_sql = check_col.iloc[0]['sql']
+        has_final_recommendation = 'final_recommendation' in table_sql
+
+    # Build query based on available columns
+    if has_final_recommendation:
+        ev = query_df(
+            """
+            SELECT
+              sqr.age_evidence,
+              sqr.third_party_evidence,
+              sqr.qualified,
+              ss.age_evidence_confidence_score,
+              ss.third_party_confidence_score,
+              ss.age_evidence_source,
+              ss.final_recommendation
+            FROM site_qualification_results sqr
+            LEFT JOIN site_summary ss ON ss.site_id = sqr.site_id
+            WHERE sqr.site_id = ?
+            ORDER BY sqr.analyzed_at DESC
+            LIMIT 1
+            """,
+            [site_id],
+        )
+    else:
+        ev = query_df(
+            """
+            SELECT
+              sqr.age_evidence,
+              sqr.third_party_evidence,
+              sqr.qualified,
+              ss.age_evidence_confidence_score,
+              ss.third_party_confidence_score,
+              ss.age_evidence_source,
+              NULL as final_recommendation
+            FROM site_qualification_results sqr
+            LEFT JOIN site_summary ss ON ss.site_id = sqr.site_id
+            WHERE sqr.site_id = ?
+            ORDER BY sqr.analyzed_at DESC
+            LIMIT 1
+            """,
+            [site_id],
+        )
     age_items, tp_items = [], []
     age_conf = 0
     tp_conf = 0
     age_src = None
+    is_minimal_cleanup = False
+    minimal_cleanup_reasons = []
+
     if not ev.empty:
         r = ev.iloc[0]
+
+        # Check for minimal cleanup disqualification
+        if r.final_recommendation == "DISQUALIFIED_MINIMAL_CLEANUP":
+            is_minimal_cleanup = True
+
         try:
             age_items = json.loads(r.age_evidence) if r.age_evidence else []
         except Exception:
@@ -291,9 +331,33 @@ def qualifications_tab(site_id: str):
             tp_items = json.loads(r.third_party_evidence) if r.third_party_evidence else []
         except Exception:
             tp_items = []
+
+        # Check for disqualified evidence items
+        for item in age_items + tp_items:
+            if isinstance(item, dict):
+                evidence_text = str(item.get('evidence_text', ''))
+                confidence = item.get('confidence_level', '')
+                if '[DISQUALIFIED - MINIMAL CLEANUP]' in evidence_text or confidence == 'disqualified':
+                    is_minimal_cleanup = True
+                    # Extract the reason from the evidence text
+                    if 'minimal' in evidence_text.lower() or 'cleanup' in evidence_text.lower():
+                        clean_text = evidence_text.replace('[DISQUALIFIED - MINIMAL CLEANUP]', '').strip()
+                        if clean_text and clean_text not in minimal_cleanup_reasons:
+                            minimal_cleanup_reasons.append(clean_text)
+
         age_conf = int(r.age_evidence_confidence_score or 0)
         tp_conf = int(r.third_party_confidence_score or 0)
         age_src = r.age_evidence_source
+
+    # Display minimal cleanup warning if applicable
+    if is_minimal_cleanup:
+        st.warning("⚠️ **Site Disqualified: Minimal Cleanup/Recovery**\n\n"
+                   "This site has been disqualified because the evidence indicates minimal contamination "
+                   "or cleanup/recovery work required. There may be insufficient damages to pursue.")
+        if minimal_cleanup_reasons:
+            with st.expander("View Disqualification Details"):
+                for reason in minimal_cleanup_reasons[:3]:  # Show top 3 reasons
+                    st.write(f"• {reason}")
 
     # Build a mapping of document title -> URL for linking
     docs = query_df(
@@ -315,18 +379,24 @@ def qualifications_tab(site_id: str):
     age_items_clean = []
     for item in age_items:
         if isinstance(item, dict):
-            txt = _clean_evidence(item.get('evidence_text'))
+            evidence_text = item.get('evidence_text', '')
+            confidence = item.get('confidence_level', '')
+            is_disqualified = '[DISQUALIFIED - MINIMAL CLEANUP]' in str(evidence_text) or confidence == 'disqualified'
+
+            # Clean the evidence text
+            txt = _clean_evidence(evidence_text)
             if txt:
                 age_items_clean.append({
                     'text': txt,
                     'source_document': item.get('source_document'),
                     'document_date': item.get('document_date'),
                     'document_type': item.get('document_type'),
+                    'is_disqualified': is_disqualified
                 })
         elif isinstance(item, str):
             txt = _clean_evidence(item)
             if txt:
-                age_items_clean.append({'text': txt, 'source_document': None, 'document_date': None, 'document_type': None})
+                age_items_clean.append({'text': txt, 'source_document': None, 'document_date': None, 'document_type': None, 'is_disqualified': False})
     # Fallback if DB stored plain text instead of JSON list
     if not age_items_clean and ev is not None and not ev.empty:
         raw = ev.iloc[0].get('age_evidence')
@@ -343,10 +413,15 @@ def qualifications_tab(site_id: str):
         for it in age_items_clean:
             title = it.get('source_document') or 'Document'
             url = title_to_url.get(str(title).strip())
-            header = f"Source: Narrative" if src_label == 'Narrative' else (
-                f"Source: Document — [{title}]({url})" if url else f"Source: Document — {title}"
+
+            # Add disqualified marker to header if needed
+            disqualified_marker = " ❌ [DISQUALIFIED - MINIMAL CLEANUP]" if it.get('is_disqualified') else ""
+            header = f"Source: Narrative{disqualified_marker}" if src_label == 'Narrative' else (
+                f"Source: Document — [{title}]({url}){disqualified_marker}" if url else f"Source: Document — {title}{disqualified_marker}"
             )
-            with st.expander(header, expanded=True):
+            with st.expander(header, expanded=not it.get('is_disqualified')):
+                if it.get('is_disqualified'):
+                    st.error("⚠️ This evidence was disqualified due to minimal cleanup/contamination")
                 st.write(it['text'])
                 if src_label != 'Narrative':
                     meta = []
@@ -359,18 +434,24 @@ def qualifications_tab(site_id: str):
     tp_items_clean = []
     for item in tp_items:
         if isinstance(item, dict):
-            txt = _clean_evidence(item.get('evidence_text'))
+            evidence_text = item.get('evidence_text', '')
+            confidence = item.get('confidence_level', '')
+            is_disqualified = '[DISQUALIFIED - MINIMAL CLEANUP]' in str(evidence_text) or confidence == 'disqualified'
+
+            # Clean the evidence text
+            txt = _clean_evidence(evidence_text)
             if txt:
                 tp_items_clean.append({
                     'text': txt,
                     'source_document': item.get('source_document'),
                     'document_date': item.get('document_date'),
                     'document_type': item.get('document_type'),
+                    'is_disqualified': is_disqualified
                 })
         elif isinstance(item, str):
             txt = _clean_evidence(item)
             if txt:
-                tp_items_clean.append({'text': txt, 'source_document': None, 'document_date': None, 'document_type': None})
+                tp_items_clean.append({'text': txt, 'source_document': None, 'document_date': None, 'document_type': None, 'is_disqualified': False})
     # Fallback if DB stored plain text instead of JSON list
     if not tp_items_clean and ev is not None and not ev.empty:
         raw = ev.iloc[0].get('third_party_evidence')
@@ -417,13 +498,18 @@ def qualifications_tab(site_id: str):
         for it in tp_items_clean:
             title = (it.get('source_document') or '').strip() if isinstance(it.get('source_document'), str) else ''
             url = title_to_url.get(title) if title else None
+
+            # Add disqualified marker to header if needed
+            disqualified_marker = " ❌ [DISQUALIFIED - MINIMAL CLEANUP]" if it.get('is_disqualified') else ""
             if url:
-                header = f"Source: Document — [{title}]({url})"
+                header = f"Source: Document — [{title}]({url}){disqualified_marker}"
             elif title:
-                header = f"Source: Document — {title}"
+                header = f"Source: Document — {title}{disqualified_marker}"
             else:
-                header = "Source: Narrative"
-            with st.expander(header, expanded=True):
+                header = f"Source: Narrative{disqualified_marker}"
+            with st.expander(header, expanded=not it.get('is_disqualified')):
+                if it.get('is_disqualified'):
+                    st.error("⚠️ This evidence was disqualified due to minimal cleanup/contamination")
                 st.write(it['text'])
                 meta = []
                 if it.get('document_date'): meta.append(str(it['document_date']))
