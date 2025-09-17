@@ -355,7 +355,6 @@ def docs_summary(where_sql: str, params: list):
     cols[2].metric("Flagged", f"{int(row.flagged or 0):,}")
 
 
-@st.cache_data(ttl=120)  # Cache for 2 minutes to improve performance
 def overview_table(where_sql: str, params: list):
     # Create a hash of the current filter state to detect changes
     import hashlib
