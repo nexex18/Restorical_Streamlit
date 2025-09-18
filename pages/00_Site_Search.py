@@ -355,6 +355,11 @@ def docs_summary(where_sql: str, params: list):
     cols[2].metric("Flagged", f"{int(row.flagged or 0):,}")
 
 
+@st.cache_data(persist="disk")
+def get_cached_data(query: str, params: tuple):
+    """Cache database queries indefinitely until manual refresh"""
+    return query_df(query, params)
+
 def overview_table(where_sql: str, params: list):
     # Create a hash of the current filter state to detect changes
     import hashlib
@@ -779,7 +784,15 @@ def main():
     ''', unsafe_allow_html=True)
     
     st.title("Site Search 🔍")
-    
+
+    # Add refresh button in the top right
+    col1, col2 = st.columns([6, 1])
+    with col2:
+        if st.button("🔄 Refresh Data"):
+            st.cache_data.clear()
+            st.success("Cache cleared! Data will be refreshed.")
+            st.rerun()
+
     # Display the database path - show full absolute path
     full_db_path = os.path.abspath(DB_PATH)
     st.sidebar.markdown("### Database Configuration")
@@ -797,20 +810,20 @@ def main():
     # Combined metrics row - sites metrics and docs metrics together
     col1, col2, col3, col4, col5, col6, col7 = st.columns(7)
     
-    # Get site metrics
+    # Get site metrics - use cached query
     sql = f"""
         WITH filtered_sites AS (
           SELECT site_id FROM site_overview {where_sql}
         )
-        SELECT 
+        SELECT
           (SELECT COUNT(*) FROM filtered_sites) AS total_sites,
           (SELECT COUNT(*) FROM filtered_sites fs JOIN site_summary ss USING(site_id) WHERE COALESCE(ss.has_narrative_content,0)=1) AS sites_with_narratives,
           (SELECT COUNT(*) FROM filtered_sites fs JOIN site_summary ss USING(site_id) WHERE COALESCE(ss.has_documents,0)=1) AS sites_with_documents,
           (SELECT COUNT(DISTINCT sqr.site_id) FROM site_qualification_results sqr JOIN filtered_sites fs ON fs.site_id=sqr.site_id WHERE COALESCE(sqr.qualified,0)=1) AS qualified_sites
     """
-    m = query_df(sql, params).iloc[0]
+    m = get_cached_data(sql, tuple(params)).iloc[0]
     
-    # Get docs metrics
+    # Get docs metrics - use cached query
     docs_sql = f"""
         WITH filtered_sites AS (
           SELECT site_id FROM site_overview {where_sql}
@@ -821,7 +834,7 @@ def main():
         FROM site_documents
         WHERE site_id IN (SELECT site_id FROM filtered_sites)
     """
-    docs = query_df(docs_sql, params).iloc[0]
+    docs = get_cached_data(docs_sql, tuple(params)).iloc[0]
     
     # Display all metrics in one row
     with col1:
