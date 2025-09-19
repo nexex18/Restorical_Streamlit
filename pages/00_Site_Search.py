@@ -160,6 +160,36 @@ def build_site_filters_ui():
             tier_opts = ["Any"] + (tiers_df["t"].tolist() if not tiers_df.empty else [])
             selected_tier = st.selectbox("Qualification Tier", tier_opts, index=0, key="tier_select")
 
+            # Batch Names filter
+            batch_df = get_cached_data("""
+                SELECT DISTINCT batch_name, batch_description,
+                       datetime(started_at, 'localtime') as run_date,
+                       total_sites, successful_sites
+                FROM batch_runs
+                ORDER BY batch_name
+            """, ())
+
+            if not batch_df.empty:
+                # Create a help string with batch descriptions
+                batch_help = "Available batches:\n"
+                for _, row in batch_df.iterrows():
+                    batch_help += f"• {row['batch_name']}: {row['batch_description'][:50]}...\n"
+
+                batch_options = batch_df["batch_name"].tolist()
+                selected_batches = st.multiselect(
+                    "Filter by Batch Name(s)",
+                    options=batch_options,
+                    default=[],
+                    key="batch_select",
+                    help=batch_help[:500]  # Limit help text length
+                )
+
+                # Show full descriptions for selected batches
+                if selected_batches:
+                    selected_info = batch_df[batch_df['batch_name'].isin(selected_batches)]
+                    for _, row in selected_info.iterrows():
+                        st.caption(f"📦 **{row['batch_name']}**: {row['batch_description']} ({row['total_sites']} sites)")
+
     where, params = [], []
     if q:
         like = f"%{q}%"
@@ -186,7 +216,19 @@ def build_site_filters_ui():
             "site_id IN (SELECT site_id FROM site_qualification_results WHERE COALESCE(qualification_tier,'UNSPECIFIED') = ?)"
         )
         params.append(selected_tier)
-    
+
+    # Filter by selected batch names
+    if 'selected_batches' in locals() and selected_batches:
+        batch_placeholders = ",".join(["?" for _ in selected_batches])
+        where.append(f"""
+            site_id IN (
+                SELECT DISTINCT json_each.value
+                FROM batch_runs, json_each(site_ids)
+                WHERE batch_name IN ({batch_placeholders})
+            )
+        """)
+        params.extend(selected_batches)
+
     # Filter by processed status (based on having a final_score in orchestration_runs)
     if processed_filter != "All":
         if processed_filter == "Yes":
