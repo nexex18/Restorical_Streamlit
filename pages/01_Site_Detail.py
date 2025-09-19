@@ -648,6 +648,102 @@ def contacts_tab(site_id: str):
     st.dataframe(df, use_container_width=True, height=500)
 
 
+def ownership_history_tab(site_id: str):
+    st.subheader("Ownership History")
+
+    # Get ownership history from database
+    df = query_df(
+        """
+        SELECT
+            ownership_start_year,
+            ownership_end_year,
+            ownership_duration_years,
+            owner_name,
+            organization_name,
+            is_current,
+            acquired_from,
+            sold_to,
+            acquisition_type,
+            business_name,
+            business_type,
+            operated_business,
+            operation_start_year,
+            operation_end_year,
+            parent_company,
+            successor_company,
+            assumes_prior_liabilities
+        FROM site_ownership_history
+        WHERE site_id = ?
+        ORDER BY COALESCE(ownership_start_year, 9999), ownership_start_date
+        """,
+        [site_id],
+    )
+
+    if df.empty:
+        st.info("No ownership history available for this site.")
+        return
+
+    st.write(f"Total ownership records: {len(df):,}")
+
+    # Create timeline visualization
+    st.markdown("### Ownership Timeline")
+
+    for idx, row in df.iterrows():
+        # Determine ownership period
+        start_year = row.get('ownership_start_year', 'Unknown')
+        end_year = row.get('ownership_end_year', 'Present' if row.get('is_current') else 'Unknown')
+        duration = row.get('ownership_duration_years', '')
+
+        # Create expandable card for each ownership period
+        with st.expander(f"📅 {start_year} - {end_year}: {row.get('owner_name', 'Unknown Owner')}" +
+                        (f" (Current)" if row.get('is_current') else "")):
+
+            col1, col2 = st.columns(2)
+
+            with col1:
+                st.markdown("**Owner Information**")
+                st.write(f"• **Name:** {row.get('owner_name', 'N/A')}")
+                if row.get('organization_name'):
+                    st.write(f"• **Organization:** {row.get('organization_name')}")
+                if row.get('parent_company'):
+                    st.write(f"• **Parent Company:** {row.get('parent_company')}")
+                if duration:
+                    st.write(f"• **Duration:** {duration} years")
+
+                st.markdown("**Transfer Information**")
+                if row.get('acquired_from'):
+                    st.write(f"• **Acquired From:** {row.get('acquired_from')}")
+                if row.get('acquisition_type'):
+                    st.write(f"• **Acquisition Type:** {row.get('acquisition_type')}")
+                if row.get('sold_to'):
+                    st.write(f"• **Sold To:** {row.get('sold_to')}")
+                if row.get('successor_company'):
+                    st.write(f"• **Successor Company:** {row.get('successor_company')}")
+
+            with col2:
+                st.markdown("**Business Operations**")
+                if row.get('operated_business'):
+                    st.write("• **Operated Business:** Yes")
+                    if row.get('business_name'):
+                        st.write(f"• **Business Name:** {row.get('business_name')}")
+                    if row.get('business_type'):
+                        st.write(f"• **Business Type:** {row.get('business_type')}")
+                    if row.get('operation_start_year') or row.get('operation_end_year'):
+                        op_start = row.get('operation_start_year', 'Unknown')
+                        op_end = row.get('operation_end_year', 'Unknown')
+                        st.write(f"• **Operation Period:** {op_start} - {op_end}")
+                else:
+                    st.write("• **Operated Business:** No")
+
+                if row.get('assumes_prior_liabilities') is not None:
+                    liability_status = "Yes" if row.get('assumes_prior_liabilities') else "No"
+                    st.write(f"• **Assumes Prior Liabilities:** {liability_status}")
+
+    # Display raw data table
+    st.markdown("### Full Ownership Data")
+    st.dataframe(df, use_container_width=True, height=400)
+
+
 def run():
     if not db_exists():
         st.error("Database not found at data/ecology_sites.db")
@@ -697,7 +793,7 @@ def run():
         except Exception:
             pass
 
-    tabs = st.tabs(["Overview", "Narratives", "Documents", "Qualifications", "Contaminants", "Contacts"])
+    tabs = st.tabs(["Overview", "Narratives", "Documents", "Qualifications", "Contaminants", "Contacts", "Ownership History"])
 
     with tabs[0]:
         overview_tab(site_id)
@@ -711,6 +807,8 @@ def run():
         contaminants_tab(site_id)
     with tabs[5]:
         contacts_tab(site_id)
+    with tabs[6]:
+        ownership_history_tab(site_id)
 
 
 run()
