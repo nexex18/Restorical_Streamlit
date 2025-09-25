@@ -151,14 +151,16 @@ def build_site_filters_ui():
                     key="span_slider"
                 )
         
-        # Right column - Qualification-related filters
+        # Right column - Filtering options
         with right_col:
             processed_filter = st.selectbox("Processed for qualification", ["All", "Yes", "No"], index=0, key="processed_select")
-            
-            # Qualification Tier
-            tiers_df = query_df("SELECT DISTINCT COALESCE(qualification_tier,'UNSPECIFIED') AS t FROM site_qualification_results ORDER BY t")
-            tier_opts = ["Any"] + (tiers_df["t"].tolist() if not tiers_df.empty else [])
-            selected_tier = st.selectbox("Qualification Tier", tier_opts, index=0, key="tier_select")
+
+            # Contact Eligibility filter - single dropdown
+            site_status_filter = st.selectbox("Contact Eligibility",
+                                             ["All", "Eligible", "DO_NOT_CONTACT"],
+                                             index=0,
+                                             key="site_status_select",
+                                             help="All: Show all sites | Eligible: Exclude DO_NOT_CONTACT sites | DO_NOT_CONTACT: Show only DO_NOT_CONTACT sites")
 
             # Batch Names filter
             batch_df = get_cached_data("""
@@ -220,12 +222,32 @@ def build_site_filters_ui():
             "site_id IN (SELECT site_id FROM site_summary WHERE COALESCE(has_narrative_content,0) = ?)"
         )
         params.append(1 if has_narr == "Yes" else 0)
-    # Filter by selected qualification tier
-    if selected_tier != "Any":
-        where.append(
-            "site_id IN (SELECT site_id FROM site_qualification_results WHERE COALESCE(qualification_tier,'UNSPECIFIED') = ?)"
-        )
-        params.append(selected_tier)
+    # Filter by site status
+    if 'site_status_filter' in locals():
+        if site_status_filter == "Eligible":
+            # Exclude DO_NOT_CONTACT sites
+            where.append(
+                """site_id NOT IN (
+                    SELECT DISTINCT or1.site_id
+                    FROM orchestration_runs or1
+                    JOIN orchestration_module_results omr ON or1.run_id = omr.run_id
+                    WHERE omr.module_name LIKE '%Disqualification%'
+                    AND json_extract(omr.module_result_json, '$.data.qualified') = 0
+                    AND json_extract(omr.module_result_json, '$.data.disqualification_reason') = 'DO_NOT_CONTACT'
+                )"""
+            )
+        elif site_status_filter == "DO_NOT_CONTACT":
+            # Show only DO_NOT_CONTACT sites
+            where.append(
+                """site_id IN (
+                    SELECT DISTINCT or1.site_id
+                    FROM orchestration_runs or1
+                    JOIN orchestration_module_results omr ON or1.run_id = omr.run_id
+                    WHERE omr.module_name LIKE '%Disqualification%'
+                    AND json_extract(omr.module_result_json, '$.data.qualified') = 0
+                    AND json_extract(omr.module_result_json, '$.data.disqualification_reason') = 'DO_NOT_CONTACT'
+                )"""
+            )
 
     # Filter by selected batch names
     if 'selected_batches' in locals() and selected_batches:
@@ -354,42 +376,17 @@ def get_metrics(where_sql: str, params: tuple):  # tuple for hashability
         SELECT
           (SELECT COUNT(*) FROM filtered_sites) AS total_sites,
           (SELECT COUNT(*) FROM filtered_sites fs JOIN site_summary ss USING(site_id) WHERE COALESCE(ss.has_narrative_content,0)=1) AS sites_with_narratives,
-          (SELECT COUNT(*) FROM filtered_sites fs JOIN site_summary ss USING(site_id) WHERE COALESCE(ss.has_documents,0)=1) AS sites_with_documents,
-          (SELECT COUNT(DISTINCT sqr.site_id) FROM site_qualification_results sqr JOIN filtered_sites fs ON fs.site_id=sqr.site_id WHERE COALESCE(sqr.qualified,0)=1) AS qualified_sites
+          (SELECT COUNT(*) FROM filtered_sites fs JOIN site_summary ss USING(site_id) WHERE COALESCE(ss.has_documents,0)=1) AS sites_with_documents
     """
     return query_df(sql, list(params)).iloc[0]
 
 def metric_row(where_sql: str, params: list):
-    cols = st.columns(4)
+    cols = st.columns(3)
     m = get_metrics(where_sql, tuple(params))  # Convert to tuple for caching
     cols[0].metric("Total Sites", f"{int(m.total_sites):,}")
     cols[1].metric("Sites w/ Narratives", f"{int(m.sites_with_narratives):,}")
     cols[2].metric("Sites w/ Documents", f"{int(m.sites_with_documents):,}")
-    cols[3].metric("Qualified Sites", f"{int(m.qualified_sites):,}")
 
-
-@st.cache_data(ttl=300)  # Cache for 5 minutes
-def tier_chart(where_sql: str, params: list):
-    df = query_df(
-        f"""
-        WITH filtered_sites AS (
-          SELECT site_id FROM site_overview {where_sql}
-        )
-        SELECT COALESCE(qualification_tier, 'UNSPECIFIED') AS tier,
-               COUNT(*) AS count
-        FROM site_qualification_results
-        WHERE site_id IN (SELECT site_id FROM filtered_sites)
-        GROUP BY COALESCE(qualification_tier, 'UNSPECIFIED')
-        ORDER BY count DESC
-        """,
-        params,
-    )
-    if df.empty:
-        st.info("No qualification results found.")
-        return
-    fig = px.bar(df, x="tier", y="count", title="Qualification Tiers", text="count")
-    fig.update_layout(xaxis_title="Tier", yaxis_title="Count", height=380)
-    st.plotly_chart(fig, use_container_width=True)
 
 
 @st.cache_data(ttl=300)  # Cache for 5 minutes
@@ -598,27 +595,6 @@ def overview_table(where_sql: str, params: list):
                 if r.completed_at:
                     last_processed_map[sid] = pd.to_datetime(r.completed_at).strftime('%Y-%m-%d %H:%M')
 
-        # Compute latest Qualification Tier per site
-        tier_rows = query_df(
-            f"""
-            WITH filtered_sites AS (
-              SELECT site_id FROM site_overview {where_sql}
-            ), latest AS (
-              SELECT sqr.site_id, COALESCE(sqr.qualification_tier,'UNSPECIFIED') AS tier, sqr.analyzed_at
-              FROM site_qualification_results sqr
-              WHERE sqr.site_id IN (SELECT site_id FROM filtered_sites)
-            ), picked AS (
-              SELECT l1.site_id, l1.tier
-              FROM latest l1
-              JOIN (
-                SELECT site_id, MAX(analyzed_at) AS ma FROM latest GROUP BY site_id
-              ) m ON m.site_id = l1.site_id AND m.ma = l1.analyzed_at
-            )
-            SELECT site_id, tier FROM picked
-            """,
-            params,
-        )
-        tier_map = {str(r.site_id): (r.tier or 'UNSPECIFIED') for _, r in tier_rows.iterrows()} if not tier_rows.empty else {}
 
         # Get feedback counts per site
         feedback_rows = query_df(
@@ -657,12 +633,6 @@ def overview_table(where_sql: str, params: list):
         except Exception:
             overall_scores = df_display["site_id"].map(lambda sid: score_map.get(str(sid), None))
         df_display.insert(insert_pos + 1, "Final Score", overall_scores)
-        # Insert Qualification Tier right after Final Score
-        try:
-            tiers = df_display["site_id"].astype(str).map(lambda sid: tier_map.get(sid, None))
-        except Exception:
-            tiers = df_display["site_id"].map(lambda sid: tier_map.get(str(sid), None))
-        df_display.insert(insert_pos + 2, "Qualification Tier", tiers)
 
         # Add per-row Process link for sites with Final Score == 0
         api_base = os.environ.get("PROCESS_API_BASE", "http://localhost:5001").rstrip("/")
@@ -760,7 +730,7 @@ def overview_table(where_sql: str, params: list):
             
             process_links = df_display.apply(make_process_link, axis=1)
 
-        df_display.insert(insert_pos + 3, "Process", process_links)
+        df_display.insert(insert_pos + 2, "Process", process_links)
         
         # Add QC column for processed sites
         def make_qc_link(r):
@@ -780,7 +750,7 @@ def overview_table(where_sql: str, params: list):
                 return ""
         
         qc_links = df_display.apply(make_qc_link, axis=1)
-        df_display.insert(insert_pos + 4, "QC", qc_links)
+        df_display.insert(insert_pos + 3, "QC", qc_links)
         
         # Add Feedback count column with links
         def make_feedback_cell(r):
@@ -796,7 +766,7 @@ def overview_table(where_sql: str, params: list):
                 return ""
         
         feedback_links = df_display.apply(make_feedback_cell, axis=1)
-        df_display.insert(insert_pos + 5, "Feedback", feedback_links)
+        df_display.insert(insert_pos + 4, "Feedback", feedback_links)
 
         st.dataframe(
             df_display,
@@ -815,10 +785,6 @@ def overview_table(where_sql: str, params: list):
                     label="Final Score",
                     help="Latest Score Calculation module final score",
                     format="%d",
-                ),
-                "Qualification Tier": st.column_config.TextColumn(
-                    label="Qualification Tier",
-                    help="Latest qualification tier from analyzed results",
                 ),
                 "Process": st.column_config.LinkColumn(
                     label="Process",
@@ -894,7 +860,7 @@ def main():
     where_sql, params = build_site_filters_ui()
 
     # Combined metrics row - sites metrics and docs metrics together
-    col1, col2, col3, col4, col5, col6, col7 = st.columns(7)
+    col1, col2, col3, col4, col5, col6 = st.columns(6)
     
     # Get site metrics - use cached query
     sql = f"""
@@ -904,8 +870,7 @@ def main():
         SELECT
           (SELECT COUNT(*) FROM filtered_sites) AS total_sites,
           (SELECT COUNT(*) FROM filtered_sites fs JOIN site_summary ss USING(site_id) WHERE COALESCE(ss.has_narrative_content,0)=1) AS sites_with_narratives,
-          (SELECT COUNT(*) FROM filtered_sites fs JOIN site_summary ss USING(site_id) WHERE COALESCE(ss.has_documents,0)=1) AS sites_with_documents,
-          (SELECT COUNT(DISTINCT sqr.site_id) FROM site_qualification_results sqr JOIN filtered_sites fs ON fs.site_id=sqr.site_id WHERE COALESCE(sqr.qualified,0)=1) AS qualified_sites
+          (SELECT COUNT(*) FROM filtered_sites fs JOIN site_summary ss USING(site_id) WHERE COALESCE(ss.has_documents,0)=1) AS sites_with_documents
     """
     m = get_cached_data(sql, tuple(params)).iloc[0]
     
@@ -930,12 +895,10 @@ def main():
     with col3:
         st.metric("w/ Docs", f"{int(m.sites_with_documents):,}")
     with col4:
-        st.metric("Qualified", f"{int(m.qualified_sites):,}")
-    with col5:
         st.metric("Docs", f"{int(docs.documents or 0):,}")
-    with col6:
+    with col5:
         st.metric("Downloaded", f"{int(docs.downloaded or 0):,}")
-    with col7:
+    with col6:
         st.metric("Flagged for analysis", f"{int(docs.flagged or 0):,}")
 
     st.divider()

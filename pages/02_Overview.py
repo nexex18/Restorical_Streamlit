@@ -23,20 +23,6 @@ def metrics():
     c4.metric("Qualified Sites", f"{int(r.qualified_sites):,}")
 
 
-def tier_breakdown():
-    df = query_df(
-        """
-        SELECT COALESCE(qualification_tier, 'UNSPECIFIED') AS tier,
-               COUNT(*) AS count
-        FROM site_qualification_results
-        GROUP BY COALESCE(qualification_tier, 'UNSPECIFIED')
-        ORDER BY count DESC
-        """
-    )
-    fig = px.bar(df, x="tier", y="count", title="Qualification Tiers", text="count")
-    fig.update_layout(height=380)
-    st.plotly_chart(fig, use_container_width=True)
-
 
 def top_contaminants():
     df = query_df(
@@ -60,17 +46,15 @@ def run():
     st.title("Overview 📈")
     st.caption("High-level metrics and highlights across the dataset.")
     metrics()
-    c1, c2 = st.columns([2, 1])
-    with c1:
-        tier_breakdown()
-    with c2:
-        st.subheader("Documents Summary")
-        docs = query_df(
-            "SELECT COUNT(*) AS documents, SUM(CASE WHEN download_status='success' THEN 1 ELSE 0 END) AS downloaded, SUM(CASE WHEN flagged_for_analysis THEN 1 ELSE 0 END) AS flagged FROM site_documents"
-        ).iloc[0]
-        st.metric("Documents", f"{int(docs.documents or 0):,}")
-        st.metric("Downloaded", f"{int(docs.downloaded or 0):,}")
-        st.metric("Flagged", f"{int(docs.flagged or 0):,}")
+
+    # Documents Summary
+    st.subheader("Documents Summary")
+    docs = query_df(
+        "SELECT COUNT(*) AS documents, SUM(CASE WHEN download_status='success' THEN 1 ELSE 0 END) AS downloaded, SUM(CASE WHEN flagged_for_analysis THEN 1 ELSE 0 END) AS flagged FROM site_documents"
+    ).iloc[0]
+    st.metric("Documents", f"{int(docs.documents or 0):,}")
+    st.metric("Downloaded", f"{int(docs.downloaded or 0):,}")
+    st.metric("Flagged", f"{int(docs.flagged or 0):,}")
 
     st.subheader("Recent Site Overview")
     

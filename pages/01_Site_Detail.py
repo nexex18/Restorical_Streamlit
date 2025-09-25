@@ -40,6 +40,38 @@ def overview_tab(site_id: str):
         return
 
     row = ov.iloc[0]
+
+    # Get the final score for this site
+    import json
+    score_df = query_df(
+        """
+        WITH lr AS (
+            SELECT or1.run_id, or1.final_score AS run_final_score, or1.completed_at
+            FROM orchestration_runs or1
+            WHERE or1.site_id = ? AND or1.completed_at IS NOT NULL
+            ORDER BY or1.completed_at DESC
+            LIMIT 1
+        )
+        SELECT lr.run_final_score, omr.module_result_json
+        FROM lr
+        LEFT JOIN orchestration_module_results omr
+            ON omr.run_id = lr.run_id AND omr.module_name LIKE '%Score Calculation%'
+        """,
+        [site_id],
+    )
+
+    final_score = None
+    if not score_df.empty:
+        score_row = score_df.iloc[0]
+        try:
+            if score_row.module_result_json:
+                data = json.loads(score_row.module_result_json)
+                final_score = int((data.get('data') or {}).get('final_score') or 0)
+        except Exception:
+            pass
+        if final_score is None:
+            final_score = int(score_row.run_final_score or 0)
+
     # External link to WA Ecology site if available
     site_url = row.get("url") or row.get("site_report_url") or row.get("neighborhood_map_url")
     if site_url:
@@ -47,12 +79,13 @@ def overview_tab(site_id: str):
             f"<a href='{site_url}' target='_blank' rel='noopener noreferrer'>Open on WA Ecology site ↗</a>",
             unsafe_allow_html=True,
         )
-    c1, c2, c3, c4, c5 = st.columns(5)
-    c1.metric("Documents", int(row.get("total_documents") or 0))
-    c2.metric("Contaminants", int(row.get("total_contaminants") or 0))
-    c3.metric("Has Docs", "✅" if row.get("has_documents") else "❌")
-    c4.metric("Has Narratives", "✅" if row.get("found_documents") else "❌")
-    c5.metric("Scrape Status", row.get("scrape_status") or "–")
+    c1, c2, c3, c4, c5, c6 = st.columns(6)
+    c1.metric("Score", final_score if final_score is not None else "N/A")
+    c2.metric("Documents", int(row.get("total_documents") or 0))
+    c3.metric("Contaminants", int(row.get("total_contaminants") or 0))
+    c4.metric("Has Docs", "✅" if row.get("has_documents") else "❌")
+    c5.metric("Has Narratives", "✅" if row.get("found_documents") else "❌")
+    c6.metric("Scrape Status", row.get("scrape_status") or "–")
 
     st.write("""
     Quick Links:
@@ -61,7 +94,6 @@ def overview_tab(site_id: str):
     st.page_link("pages/04_Narratives.py", label="Narratives Page", icon="📜")
     st.page_link("pages/05_Documents.py", label="Documents Page", icon="📄")
     st.page_link("pages/06_Feedback.py", label="Feedback Page", icon="💬")
-    st.page_link("pages/07_Qualifications.py", label="Qualifications Page", icon="✅")
     st.page_link("pages/08_Contaminants.py", label="Contaminants Page", icon="🧪")
     st.page_link("pages/09_Contacts.py", label="Contacts Page", icon="📇")
 
@@ -257,14 +289,8 @@ def qualifications_tab(site_id: str):
         else:
             overall_score = int(run.final_score or 0)
 
-    c1, c2, c3 = st.columns(3)
-    c1.metric("Overall Tier", overall_tier)
-    c2.metric("Overall Score", f"{overall_score}")
-
-    # Add qualification status metric
-    qualification_status = "✅ QUALIFIED" if overall_tier not in ['NOT_QUALIFIED', ''] else "❌ NOT QUALIFIED"
-    status_color = "green" if "QUALIFIED" in qualification_status and "NOT" not in qualification_status else "red"
-    c3.metric("Status", qualification_status)
+    # Show only the overall score
+    st.metric("Overall Score", f"{overall_score}")
 
     # Parse evidence JSON from the most recent qualification row + confidence from summary
     # Check if final_recommendation column exists
@@ -636,7 +662,7 @@ def contacts_tab(site_id: str):
         """
         SELECT contact_name, organization_name, contact_address, phone, email,
                contact_type, contact_role, is_primary_prospect, prospect_priority,
-               confidence_score, qualification_tier, qualified, site_url
+               confidence_score, site_url
         FROM site_contacts_summary
         WHERE site_id = ?
         ORDER BY prospect_priority ASC, confidence_score DESC

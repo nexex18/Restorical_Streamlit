@@ -32,7 +32,6 @@ def run():
 
     role_opts = query_df("SELECT DISTINCT contact_role AS v FROM site_contacts_summary WHERE TRIM(COALESCE(contact_role,'')) <> '' ORDER BY v")
     type_opts = query_df("SELECT DISTINCT contact_type AS v FROM site_contacts_summary WHERE TRIM(COALESCE(contact_type,'')) <> '' ORDER BY v")
-    tier_opts = query_df("SELECT DISTINCT COALESCE(qualification_tier,'UNSPECIFIED') AS v FROM site_contacts_summary ORDER BY v")
 
     # Numeric ranges
     stats = query_df(
@@ -60,8 +59,6 @@ def run():
         roles_sel = st.multiselect("Contact Role", role_opts["v"].tolist() if not role_opts.empty else [], default=[])
     with c3:
         types_sel = st.multiselect("Contact Type", type_opts["v"].tolist() if not type_opts.empty else [], default=[])
-    with c4:
-        tiers_sel = st.multiselect("Qualification Tier", tier_opts["v"].tolist() if not tier_opts.empty else [], default=[])
 
     c5, c6, c7, c8 = st.columns(4)
     with c5:
@@ -111,21 +108,6 @@ def run():
         where.append(f"contact_type IN ({placeholders})")
         params += types_sel
 
-    if tiers_sel:
-        placeholders = ",".join(["?"] * len(tiers_sel))
-        # Match UNSPECIFIED to NULL as well
-        if "UNSPECIFIED" in tiers_sel:
-            # Include rows where qualification_tier IS NULL
-            non_unspec = [t for t in tiers_sel if t != "UNSPECIFIED"]
-            if non_unspec:
-                placeholders_non = ",".join(["?"] * len(non_unspec))
-                where.append(f"(qualification_tier IN ({placeholders_non}) OR qualification_tier IS NULL)")
-                params += non_unspec
-            else:
-                where.append("qualification_tier IS NULL")
-        else:
-            where.append(f"qualification_tier IN ({placeholders})")
-            params += tiers_sel
 
     if is_primary != "Any":
         where.append("COALESCE(is_primary_prospect,0) = ?")
@@ -151,7 +133,7 @@ def run():
         f"""
         SELECT site_id, site_name, contact_name, organization_name, contact_address, phone, email,
                contact_type, contact_role, is_primary_prospect, prospect_priority, confidence_score,
-               qualification_tier, qualified, site_url
+               site_url
         FROM site_contacts_summary
         {where_sql}
         ORDER BY CAST(site_id AS INTEGER), prospect_priority ASC, confidence_score DESC
