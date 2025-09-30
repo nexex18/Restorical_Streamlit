@@ -42,35 +42,52 @@ def overview_tab(site_id: str):
     row = ov.iloc[0]
 
     # Get the final score for this site
+    # First try to get from site_qualification_results (Module 9)
     import json
-    score_df = query_df(
+    final_score = None
+
+    score_direct = query_df(
         """
-        WITH lr AS (
-            SELECT or1.run_id, or1.final_score AS run_final_score, or1.completed_at
-            FROM orchestration_runs or1
-            WHERE or1.site_id = ? AND or1.completed_at IS NOT NULL
-            ORDER BY or1.completed_at DESC
-            LIMIT 1
-        )
-        SELECT lr.run_final_score, omr.module_result_json
-        FROM lr
-        LEFT JOIN orchestration_module_results omr
-            ON omr.run_id = lr.run_id AND omr.module_name LIKE '%Score Calculation%'
+        SELECT final_calculated_score
+        FROM site_qualification_results
+        WHERE site_id = ?
+        ORDER BY analyzed_at DESC
+        LIMIT 1
         """,
         [site_id],
     )
 
-    final_score = None
-    if not score_df.empty:
-        score_row = score_df.iloc[0]
-        try:
-            if score_row.module_result_json:
-                data = json.loads(score_row.module_result_json)
-                final_score = int((data.get('data') or {}).get('final_score') or 0)
-        except Exception:
-            pass
-        if final_score is None:
-            final_score = int(score_row.run_final_score or 0)
+    if not score_direct.empty and score_direct.iloc[0].final_calculated_score is not None:
+        final_score = int(score_direct.iloc[0].final_calculated_score)
+    else:
+        # Fallback to orchestration_runs (old workflow system)
+        score_df = query_df(
+            """
+            WITH lr AS (
+                SELECT or1.run_id, or1.final_score AS run_final_score, or1.completed_at
+                FROM orchestration_runs or1
+                WHERE or1.site_id = ? AND or1.completed_at IS NOT NULL
+                ORDER BY or1.completed_at DESC
+                LIMIT 1
+            )
+            SELECT lr.run_final_score, omr.module_result_json
+            FROM lr
+            LEFT JOIN orchestration_module_results omr
+                ON omr.run_id = lr.run_id AND omr.module_name LIKE '%Score Calculation%'
+            """,
+            [site_id],
+        )
+
+        if not score_df.empty:
+            score_row = score_df.iloc[0]
+            try:
+                if score_row.module_result_json:
+                    data = json.loads(score_row.module_result_json)
+                    final_score = int((data.get('data') or {}).get('final_score') or 0)
+            except Exception:
+                pass
+            if final_score is None:
+                final_score = int(score_row.run_final_score or 0)
 
     # External link to WA Ecology site if available
     site_url = row.get("url") or row.get("site_report_url") or row.get("neighborhood_map_url")
@@ -246,48 +263,71 @@ def qualifications_tab(site_id: str):
             s = s[:min(cut_points)]
         return s.strip().strip('\"\'')
 
-    # Overall run and scoring (Module 10 Score Calculation)
-    run_df = query_df(
+    # Get the final score for this site
+    # First try to get from site_qualification_results (Module 9)
+    import json
+    final_score = None
+
+    score_direct = query_df(
         """
-        SELECT run_id, started_at, completed_at, final_status, final_score, total_processing_time_seconds
-        FROM orchestration_runs
-        WHERE site_id = ? AND completed_at IS NOT NULL
-        ORDER BY completed_at DESC
+        SELECT final_calculated_score
+        FROM site_qualification_results
+        WHERE site_id = ?
+        ORDER BY analyzed_at DESC
         LIMIT 1
         """,
         [site_id],
     )
+
+    if not score_direct.empty and score_direct.iloc[0].final_calculated_score is not None:
+        final_score = int(score_direct.iloc[0].final_calculated_score)
+
+    # Overall run and scoring (Module 10 Score Calculation)
+    # Only query old workflow if Module 9 didn't provide a score
     overall_tier = "UNSPECIFIED"
-    overall_score = 0
+    overall_score = final_score if final_score is not None else 0
     module10_data = {}
-    if not run_df.empty:
-        run = run_df.iloc[0]
-        # Derive tier from final_status
-        fs = str(run.final_status or '')
-        if 'QUALIFIED_TIER_' in fs:
-            overall_tier = fs.replace('QUALIFIED_TIER_', '')
-        elif 'NOT_QUALIFIED' in fs:
-            overall_tier = 'NOT_QUALIFIED'
-        # Try to read module 10 result
-        mod_df = query_df(
+
+    # If Module 9 provided a score, use it; otherwise fall back to old workflow
+    if final_score is None:
+        run_df = query_df(
             """
-            SELECT module_result_json
-            FROM orchestration_module_results
-            WHERE run_id = ? AND module_name LIKE '%Score Calculation%'
+            SELECT run_id, started_at, completed_at, final_status, final_score, total_processing_time_seconds
+            FROM orchestration_runs
+            WHERE site_id = ? AND completed_at IS NOT NULL
+            ORDER BY completed_at DESC
             LIMIT 1
             """,
-            [run.run_id],
+            [site_id],
         )
-        if not mod_df.empty and mod_df.iloc[0].module_result_json:
-            try:
-                data = json.loads(mod_df.iloc[0].module_result_json)
-                d = data.get('data') or {}
-                module10_data = d
-                overall_score = int(d.get('final_score') or run.final_score or 0)
-            except Exception:
+        if not run_df.empty:
+            run = run_df.iloc[0]
+            # Derive tier from final_status
+            fs = str(run.final_status or '')
+            if 'QUALIFIED_TIER_' in fs:
+                overall_tier = fs.replace('QUALIFIED_TIER_', '')
+            elif 'NOT_QUALIFIED' in fs:
+                overall_tier = 'NOT_QUALIFIED'
+            # Try to read module 10 result
+            mod_df = query_df(
+                """
+                SELECT module_result_json
+                FROM orchestration_module_results
+                WHERE run_id = ? AND module_name LIKE '%Score Calculation%'
+                LIMIT 1
+                """,
+                [run.run_id],
+            )
+            if not mod_df.empty and mod_df.iloc[0].module_result_json:
+                try:
+                    data = json.loads(mod_df.iloc[0].module_result_json)
+                    d = data.get('data') or {}
+                    module10_data = d
+                    overall_score = int(d.get('final_score') or run.final_score or 0)
+                except Exception:
+                    overall_score = int(run.final_score or 0)
+            else:
                 overall_score = int(run.final_score or 0)
-        else:
-            overall_score = int(run.final_score or 0)
 
     # Show only the overall score
     st.metric("Overall Score", f"{overall_score}")

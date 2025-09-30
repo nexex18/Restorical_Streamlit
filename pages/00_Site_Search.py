@@ -52,7 +52,7 @@ def build_site_filters_ui():
     # Create an expander for filters to save space
     with st.expander("🔍 Filters", expanded=True):
         # Create two main columns - wider left for other filters, narrower right for qualification filters
-        left_col, right_col = st.columns([3, 1])
+        left_col, right_col = st.columns([2, 1])
         
         # Left column - All other filters
         with left_col:
@@ -151,18 +151,40 @@ def build_site_filters_ui():
                     key="span_slider"
                 )
         
-        # Right column - Filtering options
+        # Right column - split into 2 sub-columns for more filters
         with right_col:
-            processed_filter = st.selectbox("Processed for qualification", ["All", "Yes", "No"], index=0, key="processed_select")
+            right_col1, right_col2 = st.columns(2)
 
-            # Contact Eligibility filter - single dropdown
-            site_status_filter = st.selectbox("Contact Eligibility",
-                                             ["All", "Eligible", "DO_NOT_CONTACT"],
-                                             index=0,
-                                             key="site_status_select",
-                                             help="All: Show all sites | Eligible: Exclude DO_NOT_CONTACT sites | DO_NOT_CONTACT: Show only DO_NOT_CONTACT sites")
+            with right_col1:
+                processed_filter = st.selectbox("Processed for qualification", ["All", "Yes", "No"], index=0, key="processed_select")
 
-            # Batch Names filter
+                # Contact Eligibility filter - single dropdown
+                site_status_filter = st.selectbox("Contact Eligibility",
+                                                 ["All", "Eligible", "DO_NOT_CONTACT"],
+                                                 index=0,
+                                                 key="site_status_select",
+                                                 help="All: Show all sites | Eligible: Exclude DO_NOT_CONTACT sites | DO_NOT_CONTACT: Show only DO_NOT_CONTACT sites")
+
+            with right_col2:
+                # Historical Use filter
+                historical_use_options = get_cached_data("""
+                    SELECT DISTINCT historical_use_category
+                    FROM sites
+                    WHERE historical_use_category IS NOT NULL
+                    ORDER BY historical_use_category
+                """, ())
+
+                historical_use_list = ["All"] + historical_use_options["historical_use_category"].tolist() if not historical_use_options.empty else ["All"]
+                selected_historical_use = st.multiselect(
+                    "Historical Use Category",
+                    options=[opt for opt in historical_use_list if opt != "All"],
+                    default=[],
+                    key="historical_use_select",
+                    help="Filter sites by their historical use category from Module 9 analysis"
+                )
+
+        # Batch Names filter (full width in right column)
+        with right_col:
             batch_df = get_cached_data("""
                 SELECT DISTINCT batch_name, batch_description,
                        datetime(started_at, 'localtime') as run_date,
@@ -330,20 +352,36 @@ def build_site_filters_ui():
         params += [int(span_range[0]), int(span_range[1])]
     # Only apply score filter if range is not the default (0, 100)
     if 'score_range' in locals() and score_range != (0, 100):
-        # Match exact table display logic: extract from JSON if available, else use run_final_score
+        # Include both Module 9 scores and old workflow scores
         where.append(
             """site_id IN (
-                WITH lr AS (
-                    SELECT or1.site_id, or1.run_id, or1.final_score AS run_final_score, or1.completed_at
-                    FROM orchestration_runs or1
-                    WHERE or1.completed_at IS NOT NULL
-                ), picked AS (
-                    SELECT l1.site_id, l1.run_id, l1.run_final_score
-                    FROM lr l1
-                    JOIN (
-                        SELECT site_id, MAX(completed_at) AS mc FROM lr GROUP BY site_id
-                    ) m ON m.site_id = l1.site_id AND m.mc = l1.completed_at
-                ), scores AS (
+                -- Module 9 scores
+                SELECT sqr.site_id
+                FROM site_qualification_results sqr
+                WHERE sqr.analyzed_at = (
+                    SELECT MAX(analyzed_at)
+                    FROM site_qualification_results
+                    WHERE site_id = sqr.site_id
+                )
+                AND CAST(sqr.final_calculated_score AS INTEGER) BETWEEN ? AND ?
+
+                UNION
+
+                -- Old workflow scores (for sites not in Module 9)
+                SELECT s.site_id
+                FROM (
+                    WITH lr AS (
+                        SELECT or1.site_id, or1.run_id, or1.final_score AS run_final_score, or1.completed_at
+                        FROM orchestration_runs or1
+                        WHERE or1.completed_at IS NOT NULL
+                        AND or1.site_id NOT IN (SELECT DISTINCT site_id FROM site_qualification_results)
+                    ), picked AS (
+                        SELECT l1.site_id, l1.run_id, l1.run_final_score
+                        FROM lr l1
+                        JOIN (
+                            SELECT site_id, MAX(completed_at) AS mc FROM lr GROUP BY site_id
+                        ) m ON m.site_id = l1.site_id AND m.mc = l1.completed_at
+                    )
                     SELECT
                         p.site_id,
                         COALESCE(
@@ -355,13 +393,23 @@ def build_site_filters_ui():
                     LEFT JOIN orchestration_module_results omr
                         ON omr.run_id = p.run_id
                         AND omr.module_name LIKE '%Score Calculation%'
-                )
-                SELECT site_id
-                FROM scores
-                WHERE final_score BETWEEN ? AND ?
+                ) s
+                WHERE s.final_score BETWEEN ? AND ?
             )"""
         )
-        params += [int(score_range[0]), int(score_range[1])]
+        params += [int(score_range[0]), int(score_range[1]), int(score_range[0]), int(score_range[1])]
+
+    # Filter by historical use category
+    if 'selected_historical_use' in locals() and selected_historical_use:
+        placeholders = ",".join(["?" for _ in selected_historical_use])
+        where.append(f"""
+            site_id IN (
+                SELECT site_id
+                FROM sites
+                WHERE historical_use_category IN ({placeholders})
+            )
+        """)
+        params.extend(selected_historical_use)
 
     where_sql = ("WHERE " + " AND ".join(where)) if where else ""
     return where_sql, params
@@ -551,7 +599,39 @@ def overview_table(where_sql: str, params: list):
     if df.empty:
         st.info("No site overview data found.")
     else:
-        # Compute Final Score per site from latest run's Score Calculation module (Module 10)
+        # Compute Final Score per site
+        # First try Module 9 (site_qualification_results), then fall back to old workflow (orchestration_runs)
+
+        # Get scores from Module 9
+        module9_scores = query_df(
+            f"""
+            WITH filtered_sites AS (
+              SELECT site_id FROM site_overview {where_sql}
+            )
+            SELECT sqr.site_id, sqr.final_calculated_score, sqr.analyzed_at
+            FROM site_qualification_results sqr
+            WHERE sqr.site_id IN (SELECT site_id FROM filtered_sites)
+            AND sqr.analyzed_at = (
+                SELECT MAX(analyzed_at)
+                FROM site_qualification_results
+                WHERE site_id = sqr.site_id
+            )
+            """,
+            params,
+        )
+
+        score_map = {}
+        last_processed_map = {}
+
+        # First, populate from Module 9 results
+        if not module9_scores.empty:
+            for _, r in module9_scores.iterrows():
+                sid = str(r.site_id)
+                score_map[sid] = int(r.final_calculated_score) if r.final_calculated_score is not None else None
+                if r.analyzed_at:
+                    last_processed_map[sid] = pd.to_datetime(r.analyzed_at).strftime('%Y-%m-%d %H:%M')
+
+        # Then, get scores from old workflow for sites not in Module 9
         score_rows = query_df(
             f"""
             WITH filtered_sites AS (
@@ -575,25 +655,27 @@ def overview_table(where_sql: str, params: list):
             """,
             params,
         )
-        score_map = {}
-        last_processed_map = {}
+
+        # Fill in scores from old workflow only if not already set by Module 9
         if not score_rows.empty:
             import json as _json
             for _, r in score_rows.iterrows():
-                final_score = None
-                try:
-                    if r.module_result_json:
-                        d = _json.loads(r.module_result_json)
-                        final_score = int((d.get('data') or {}).get('final_score') or 0)
-                except Exception:
-                    final_score = None
-                if final_score is None:
-                    final_score = int(r.run_final_score or 0)
                 sid = str(r.site_id)
-                score_map[sid] = final_score
-                # Store the completed_at timestamp
-                if r.completed_at:
-                    last_processed_map[sid] = pd.to_datetime(r.completed_at).strftime('%Y-%m-%d %H:%M')
+                # Only use old workflow score if Module 9 didn't provide one
+                if sid not in score_map:
+                    final_score = None
+                    try:
+                        if r.module_result_json:
+                            d = _json.loads(r.module_result_json)
+                            final_score = int((d.get('data') or {}).get('final_score') or 0)
+                    except Exception:
+                        final_score = None
+                    if final_score is None:
+                        final_score = int(r.run_final_score or 0)
+                    score_map[sid] = final_score
+                    # Store the completed_at timestamp only if not already set
+                    if r.completed_at and sid not in last_processed_map:
+                        last_processed_map[sid] = pd.to_datetime(r.completed_at).strftime('%Y-%m-%d %H:%M')
 
 
         # Get feedback counts per site
@@ -619,20 +701,41 @@ def overview_table(where_sql: str, params: list):
         df_display = df.copy()
         df_display.insert(0, "Site Detail", detail_col)
 
-        # Insert Last Processed as the 3rd column (after site_name)
+        # Get historical use categories for all sites in the current page
+        historical_use_rows = query_df(
+            f"""
+            WITH filtered_sites AS (
+              SELECT site_id FROM site_overview {where_sql}
+            )
+            SELECT s.site_id, s.historical_use_category
+            FROM sites s
+            WHERE s.site_id IN (SELECT site_id FROM filtered_sites)
+            """,
+            params,
+        )
+        historical_use_map = {str(r.site_id): r.historical_use_category for _, r in historical_use_rows.iterrows()} if not historical_use_rows.empty else {}
+
+        # Insert Historical Use as the 3rd column (after site_name)
+        try:
+            historical_use = df_display["site_id"].astype(str).map(lambda sid: historical_use_map.get(sid, None))
+        except Exception:
+            historical_use = df_display["site_id"].map(lambda sid: historical_use_map.get(str(sid), None))
+        insert_pos = 3  # 0: Site Detail, 1: site_id, 2: site_name, 3: Historical Use
+        df_display.insert(insert_pos, "Historical Use", historical_use)
+
+        # Insert Last Processed as the 4th column (after Historical Use)
         try:
             last_processed = df_display["site_id"].astype(str).map(lambda sid: last_processed_map.get(sid, None))
         except Exception:
             last_processed = df_display["site_id"].map(lambda sid: last_processed_map.get(str(sid), None))
-        insert_pos = 3  # 0: Site Detail, 1: site_id, 2: site_name, 3: Last Processed
-        df_display.insert(insert_pos, "Last Processed", last_processed)
+        df_display.insert(insert_pos + 1, "Last Processed", last_processed)
 
-        # Insert Final Score as the 4th column (after Last Processed)
+        # Insert Final Score as the 5th column (after Last Processed)
         try:
             overall_scores = df_display["site_id"].astype(str).map(lambda sid: score_map.get(sid, None))
         except Exception:
             overall_scores = df_display["site_id"].map(lambda sid: score_map.get(str(sid), None))
-        df_display.insert(insert_pos + 1, "Final Score", overall_scores)
+        df_display.insert(insert_pos + 2, "Final Score", overall_scores)
 
         # Add per-row Process link for sites with Final Score == 0
         api_base = os.environ.get("PROCESS_API_BASE", "http://localhost:5001").rstrip("/")
@@ -730,7 +833,7 @@ def overview_table(where_sql: str, params: list):
             
             process_links = df_display.apply(make_process_link, axis=1)
 
-        df_display.insert(insert_pos + 2, "Process", process_links)
+        df_display.insert(insert_pos + 3, "Process", process_links)
         
         # Add QC column for processed sites
         def make_qc_link(r):
@@ -750,7 +853,7 @@ def overview_table(where_sql: str, params: list):
                 return ""
         
         qc_links = df_display.apply(make_qc_link, axis=1)
-        df_display.insert(insert_pos + 3, "QC", qc_links)
+        df_display.insert(insert_pos + 4, "QC", qc_links)
         
         # Add Feedback count column with links
         def make_feedback_cell(r):
@@ -766,7 +869,7 @@ def overview_table(where_sql: str, params: list):
                 return ""
         
         feedback_links = df_display.apply(make_feedback_cell, axis=1)
-        df_display.insert(insert_pos + 4, "Feedback", feedback_links)
+        df_display.insert(insert_pos + 5, "Feedback", feedback_links)
 
         st.dataframe(
             df_display,
@@ -776,6 +879,10 @@ def overview_table(where_sql: str, params: list):
                 "Site Detail": st.column_config.LinkColumn(
                     label="Site Detail",
                     display_text="Open",
+                ),
+                "Historical Use": st.column_config.TextColumn(
+                    label="Historical Use",
+                    help="Historical use category from Module 9 analysis",
                 ),
                 "Last Processed": st.column_config.TextColumn(
                     label="Last Processed",
