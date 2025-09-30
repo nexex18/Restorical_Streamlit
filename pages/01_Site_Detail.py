@@ -591,7 +591,8 @@ def qualifications_tab(site_id: str):
                     if meta:
                         st.caption(" | ".join(meta))
 
-    # Third-Party Evidence section (only non-empty evidence)
+    # Cleanup Evidence section
+    # Note: Module 9 stores cleanup evidence in third_party_evidence column
     tp_items_clean = []
     for item in tp_items:
         if isinstance(item, dict):
@@ -607,6 +608,7 @@ def qualifications_tab(site_id: str):
                     'source_document': item.get('source_document'),
                     'document_date': item.get('document_date'),
                     'document_type': item.get('document_type'),
+                    'confidence_level': confidence,
                     'is_disqualified': is_disqualified
                 })
         elif isinstance(item, str):
@@ -623,7 +625,8 @@ def qualifications_tab(site_id: str):
     if tp_items_clean:
         pts = module10_data.get('third_party_score') if isinstance(module10_data, dict) else None
         pts_str = f" ({pts} points)" if isinstance(pts, (int, float)) else ""
-        st.subheader(f"3rd Party Evidence{pts_str}{f' (Confidence: {tp_conf}%)' if tp_conf else ''}")
+        st.subheader(f"Cleanup Evidence{pts_str}{f' (Confidence: {tp_conf}%)' if tp_conf else ''}")
+        st.caption("Evidence of remediation activities and cleanup investment")
 
         # Include contamination status summary (C/S/B) to mirror V3 guidance
         cont = query_df(
@@ -659,15 +662,16 @@ def qualifications_tab(site_id: str):
         for it in tp_items_clean:
             title = (it.get('source_document') or '').strip() if isinstance(it.get('source_document'), str) else ''
             url = title_to_url.get(title) if title else None
+            confidence_badge = f" [{it.get('confidence_level', '').upper()}]" if it.get('confidence_level') else ""
 
             # Add disqualified marker to header if needed
             disqualified_marker = " ❌ [DISQUALIFIED - MINIMAL CLEANUP]" if it.get('is_disqualified') else ""
             if url:
-                header = f"Source: Document — [{title}]({url}){disqualified_marker}"
+                header = f"Source: Document — [{title}]({url}){confidence_badge}{disqualified_marker}"
             elif title:
-                header = f"Source: Document — {title}{disqualified_marker}"
+                header = f"Source: Document — {title}{confidence_badge}{disqualified_marker}"
             else:
-                header = f"Source: Narrative{disqualified_marker}"
+                header = f"Source: Narrative{confidence_badge}{disqualified_marker}"
             with st.expander(header, expanded=not it.get('is_disqualified')):
                 if it.get('is_disqualified'):
                     st.error("⚠️ This evidence was disqualified due to minimal cleanup/contamination")
