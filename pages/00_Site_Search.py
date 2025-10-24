@@ -214,16 +214,6 @@ def build_site_filters_ui():
                     for _, row in selected_info.iterrows():
                         st.caption(f"📦 **{row['batch_name']}**: {row['batch_description']} ({row['total_sites']} sites)")
 
-            # Score filter - always 0-100 range
-            score_range = st.slider(
-                "Score",
-                min_value=0,
-                max_value=100,
-                value=(0, 100),
-                key="score_slider",
-                help="Filter by final score (0-100 shows all sites, other ranges filter by score)"
-            )
-
     where, params = [], []
     if q:
         like = f"%{q}%"
@@ -357,54 +347,6 @@ def build_site_filters_ui():
             "site_id IN (SELECT site_id FROM site_summary WHERE COALESCE(document_date_range_years,0) BETWEEN ? AND ?)"
         )
         params += [int(span_range[0]), int(span_range[1])]
-    # Only apply score filter if range is not the default (0, 100)
-    if 'score_range' in locals() and score_range != (0, 100):
-        # Include both Module 9 scores and old workflow scores
-        where.append(
-            """site_id IN (
-                -- Module 9 scores
-                SELECT sqr.site_id
-                FROM site_qualification_results sqr
-                WHERE sqr.analyzed_at = (
-                    SELECT MAX(analyzed_at)
-                    FROM site_qualification_results
-                    WHERE site_id = sqr.site_id
-                )
-                AND CAST(sqr.final_calculated_score AS INTEGER) BETWEEN ? AND ?
-
-                UNION
-
-                -- Old workflow scores (for sites not in Module 9)
-                SELECT s.site_id
-                FROM (
-                    WITH lr AS (
-                        SELECT or1.site_id, or1.run_id, or1.final_score AS run_final_score, or1.completed_at
-                        FROM orchestration_runs or1
-                        WHERE or1.completed_at IS NOT NULL
-                        AND or1.site_id NOT IN (SELECT DISTINCT site_id FROM site_qualification_results)
-                    ), picked AS (
-                        SELECT l1.site_id, l1.run_id, l1.run_final_score
-                        FROM lr l1
-                        JOIN (
-                            SELECT site_id, MAX(completed_at) AS mc FROM lr GROUP BY site_id
-                        ) m ON m.site_id = l1.site_id AND m.mc = l1.completed_at
-                    )
-                    SELECT
-                        p.site_id,
-                        COALESCE(
-                            CAST(json_extract(omr.module_result_json, '$.data.final_score') AS INTEGER),
-                            CAST(p.run_final_score AS INTEGER),
-                            0
-                        ) as final_score
-                    FROM picked p
-                    LEFT JOIN orchestration_module_results omr
-                        ON omr.run_id = p.run_id
-                        AND omr.module_name LIKE '%Score Calculation%'
-                ) s
-                WHERE s.final_score BETWEEN ? AND ?
-            )"""
-        )
-        params += [int(score_range[0]), int(score_range[1]), int(score_range[0]), int(score_range[1])]
 
     # Filter by historical use category
     if 'selected_historical_use' in locals() and selected_historical_use:
