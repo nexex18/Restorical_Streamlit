@@ -244,13 +244,27 @@ def build_site_filters_ui():
             "site_id IN (SELECT site_id FROM site_summary WHERE COALESCE(has_narrative_content,0) = ?)"
         )
         params.append(1 if has_narr == "Yes" else 0)
-    # Filter by age check score
+    # Filter by age check score (from Module 9b Age Qualification)
     if 'age_check_filter' in locals() and age_check_filter != "All":
         where.append(
             """site_id IN (
-                SELECT site_id
-                FROM site_summary
-                WHERE age_evidence_confidence_score = ?
+                WITH latest_runs AS (
+                  SELECT or1.site_id, or1.run_id, or1.completed_at
+                  FROM orchestration_runs or1
+                  WHERE or1.completed_at IS NOT NULL
+                ), picked_runs AS (
+                  SELECT l1.site_id, l1.run_id
+                  FROM latest_runs l1
+                  JOIN (
+                    SELECT site_id, MAX(completed_at) AS mc FROM latest_runs GROUP BY site_id
+                  ) m ON m.site_id = l1.site_id AND m.mc = l1.completed_at
+                )
+                SELECT p.site_id
+                FROM picked_runs p
+                JOIN orchestration_module_results omr
+                  ON omr.run_id = p.run_id
+                  AND omr.module_name LIKE '%Age Qualification%'
+                WHERE CAST(json_extract(omr.module_result_json, '$.data.age_score') AS INTEGER) = ?
             )"""
         )
         params.append(int(age_check_filter))
@@ -699,19 +713,33 @@ def overview_table(where_sql: str, params: list):
         )
         historical_use_map = {str(r.site_id): r.historical_use_category for _, r in historical_use_rows.iterrows()} if not historical_use_rows.empty else {}
 
-        # Get age check scores for all sites in the current page
+        # Get age check scores for all sites in the current page (from Module 9b Age Qualification)
         age_score_rows = query_df(
             f"""
             WITH filtered_sites AS (
               SELECT site_id FROM site_overview {where_sql}
+            ), latest_runs AS (
+              SELECT or1.site_id, or1.run_id, or1.completed_at
+              FROM orchestration_runs or1
+              WHERE or1.site_id IN (SELECT site_id FROM filtered_sites)
+                AND or1.completed_at IS NOT NULL
+            ), picked_runs AS (
+              SELECT l1.site_id, l1.run_id
+              FROM latest_runs l1
+              JOIN (
+                SELECT site_id, MAX(completed_at) AS mc FROM latest_runs GROUP BY site_id
+              ) m ON m.site_id = l1.site_id AND m.mc = l1.completed_at
             )
-            SELECT ss.site_id, ss.age_evidence_confidence_score
-            FROM site_summary ss
-            WHERE ss.site_id IN (SELECT site_id FROM filtered_sites)
+            SELECT p.site_id,
+                   CAST(json_extract(omr.module_result_json, '$.data.age_score') AS INTEGER) as age_score
+            FROM picked_runs p
+            LEFT JOIN orchestration_module_results omr
+              ON omr.run_id = p.run_id
+              AND omr.module_name LIKE '%Age Qualification%'
             """,
             params,
         )
-        age_score_map = {str(r.site_id): r.age_evidence_confidence_score for _, r in age_score_rows.iterrows()} if not age_score_rows.empty else {}
+        age_score_map = {str(r.site_id): r.age_score for _, r in age_score_rows.iterrows()} if not age_score_rows.empty else {}
 
         # Insert Historical Use as the 3rd column (after site_name)
         try:
@@ -900,7 +928,7 @@ def overview_table(where_sql: str, params: list):
                 ),
                 "Age Check Score": st.column_config.NumberColumn(
                     label="Age Check Score",
-                    help="Age evidence confidence score from Module 9 analysis",
+                    help="Age Qualification score from Module 9b (out of 50 points)",
                     format="%d",
                 ),
                 "Process": st.column_config.LinkColumn(
