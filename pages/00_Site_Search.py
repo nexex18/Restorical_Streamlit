@@ -159,11 +159,11 @@ def build_site_filters_ui():
                 processed_filter = st.selectbox("Processed for qualification", ["All", "Yes", "No"], index=0, key="processed_select")
 
                 # Age Check filter - single dropdown
-                age_check_filter = st.selectbox("Age Check Score",
-                                                ["All", "0", "50"],
+                age_check_filter = st.selectbox("Age Check",
+                                                ["All", "Passed", "Failed"],
                                                 index=0,
                                                 key="age_check_select",
-                                                help="All: Show all sites | 0: Sites with age score 0 | 50: Sites with age score 50")
+                                                help="All: Show all sites | Passed: Age qualification passed | Failed: Age qualification failed")
 
             with right_col2:
                 # Historical Use filter
@@ -244,30 +244,16 @@ def build_site_filters_ui():
             "site_id IN (SELECT site_id FROM site_summary WHERE COALESCE(has_narrative_content,0) = ?)"
         )
         params.append(1 if has_narr == "Yes" else 0)
-    # Filter by age check score (from Module 9b Age Qualification)
+    # Filter by age check (from site_qualification_results.age_qualified)
     if 'age_check_filter' in locals() and age_check_filter != "All":
         where.append(
             """site_id IN (
-                WITH latest_runs AS (
-                  SELECT or1.site_id, or1.run_id, or1.completed_at
-                  FROM orchestration_runs or1
-                  WHERE or1.completed_at IS NOT NULL
-                ), picked_runs AS (
-                  SELECT l1.site_id, l1.run_id
-                  FROM latest_runs l1
-                  JOIN (
-                    SELECT site_id, MAX(completed_at) AS mc FROM latest_runs GROUP BY site_id
-                  ) m ON m.site_id = l1.site_id AND m.mc = l1.completed_at
-                )
-                SELECT p.site_id
-                FROM picked_runs p
-                JOIN orchestration_module_results omr
-                  ON omr.run_id = p.run_id
-                  AND omr.module_name LIKE '%Age Qualification%'
-                WHERE CAST(json_extract(omr.module_result_json, '$.data.age_score') AS INTEGER) = ?
+                SELECT site_id
+                FROM site_qualification_results
+                WHERE age_qualified = ?
             )"""
         )
-        params.append(int(age_check_filter))
+        params.append(1 if age_check_filter == "Passed" else 0)
 
     # Filter by selected batch names
     if 'selected_batches' in locals() and selected_batches:
@@ -713,33 +699,27 @@ def overview_table(where_sql: str, params: list):
         )
         historical_use_map = {str(r.site_id): r.historical_use_category for _, r in historical_use_rows.iterrows()} if not historical_use_rows.empty else {}
 
-        # Get age check scores for all sites in the current page (from Module 9b Age Qualification)
-        age_score_rows = query_df(
+        # Get age check status for all sites in the current page (from site_qualification_results)
+        age_check_rows = query_df(
             f"""
             WITH filtered_sites AS (
               SELECT site_id FROM site_overview {where_sql}
-            ), latest_runs AS (
-              SELECT or1.site_id, or1.run_id, or1.completed_at
-              FROM orchestration_runs or1
-              WHERE or1.site_id IN (SELECT site_id FROM filtered_sites)
-                AND or1.completed_at IS NOT NULL
-            ), picked_runs AS (
-              SELECT l1.site_id, l1.run_id
-              FROM latest_runs l1
-              JOIN (
-                SELECT site_id, MAX(completed_at) AS mc FROM latest_runs GROUP BY site_id
-              ) m ON m.site_id = l1.site_id AND m.mc = l1.completed_at
             )
-            SELECT p.site_id,
-                   CAST(json_extract(omr.module_result_json, '$.data.age_score') AS INTEGER) as age_score
-            FROM picked_runs p
-            LEFT JOIN orchestration_module_results omr
-              ON omr.run_id = p.run_id
-              AND omr.module_name LIKE '%Age Qualification%'
+            SELECT sqr.site_id, sqr.age_qualified
+            FROM site_qualification_results sqr
+            WHERE sqr.site_id IN (SELECT site_id FROM filtered_sites)
             """,
             params,
         )
-        age_score_map = {str(r.site_id): r.age_score for _, r in age_score_rows.iterrows()} if not age_score_rows.empty else {}
+        # Convert boolean to "Passed"/"Failed" text
+        age_check_map = {}
+        if not age_check_rows.empty:
+            for _, r in age_check_rows.iterrows():
+                sid = str(r.site_id)
+                if r.age_qualified is not None:
+                    age_check_map[sid] = "Passed" if r.age_qualified else "Failed"
+                else:
+                    age_check_map[sid] = None
 
         # Insert Historical Use as the 3rd column (after site_name)
         try:
@@ -763,12 +743,12 @@ def overview_table(where_sql: str, params: list):
             overall_scores = df_display["site_id"].map(lambda sid: score_map.get(str(sid), None))
         df_display.insert(insert_pos + 2, "Final Score", overall_scores)
 
-        # Insert Age Check Score as the 6th column (after Final Score)
+        # Insert Age Check as the 6th column (after Final Score)
         try:
-            age_scores = df_display["site_id"].astype(str).map(lambda sid: age_score_map.get(sid, None))
+            age_check = df_display["site_id"].astype(str).map(lambda sid: age_check_map.get(sid, None))
         except Exception:
-            age_scores = df_display["site_id"].map(lambda sid: age_score_map.get(str(sid), None))
-        df_display.insert(insert_pos + 3, "Age Check Score", age_scores)
+            age_check = df_display["site_id"].map(lambda sid: age_check_map.get(str(sid), None))
+        df_display.insert(insert_pos + 3, "Age Check", age_check)
 
         # Add per-row Process link for sites with Final Score == 0
         api_base = os.environ.get("PROCESS_API_BASE", "http://localhost:5001").rstrip("/")
@@ -926,10 +906,9 @@ def overview_table(where_sql: str, params: list):
                     help="Latest Score Calculation module final score",
                     format="%d",
                 ),
-                "Age Check Score": st.column_config.NumberColumn(
-                    label="Age Check Score",
-                    help="Age Qualification score from Module 9b (out of 50 points)",
-                    format="%d",
+                "Age Check": st.column_config.TextColumn(
+                    label="Age Check",
+                    help="Age Qualification status: Passed or Failed",
                 ),
                 "Process": st.column_config.LinkColumn(
                     label="Process",
