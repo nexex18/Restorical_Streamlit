@@ -234,37 +234,61 @@ def build_site_filters_ui():
             "site_id IN (SELECT site_id FROM site_summary WHERE COALESCE(has_narrative_content,0) = ?)"
         )
         params.append(1 if has_narr == "Yes" else 0)
-    # Filter by qualified status (Final Score = 100 AND age_qualified = true)
+    # Filter by qualified status (Final Score = 100 AND age_score = 50)
+    # Uses the SAME logic as FastHTML view_results.py - gets age_score from Module 9b JSON of latest run
     if 'qualified_filter' in locals() and qualified_filter != "All":
         if qualified_filter == "Yes":
-            # Must have Final Score = 100 AND age_qualified = true (Module 9 only for simplicity)
+            # Must have Final Score = 100 AND age_score = 50 from Module 9b
             where.append(
                 """site_id IN (
-                    SELECT sqr.site_id
-                    FROM site_qualification_results sqr
-                    WHERE sqr.analyzed_at = (
+                    -- Get latest completed run per site
+                    WITH latest_runs AS (
+                        SELECT site_id, run_id,
+                               ROW_NUMBER() OVER (PARTITION BY site_id ORDER BY completed_at DESC) as rn
+                        FROM orchestration_runs
+                        WHERE completed_at IS NOT NULL
+                    )
+                    SELECT lr.site_id
+                    FROM latest_runs lr
+                    JOIN site_qualification_results sqr ON lr.site_id = sqr.site_id
+                    LEFT JOIN orchestration_module_results omr
+                        ON lr.run_id = omr.run_id
+                        AND omr.module_name LIKE '%Age Qualification%'
+                    WHERE lr.rn = 1
+                    AND sqr.analyzed_at = (
                         SELECT MAX(analyzed_at)
                         FROM site_qualification_results
-                        WHERE site_id = sqr.site_id
+                        WHERE site_id = lr.site_id
                     )
                     AND sqr.final_calculated_score = 100
-                    AND sqr.age_qualified = 1
+                    AND CAST(json_extract(omr.module_result_json, '$.data.score') AS INTEGER) = 50
                 )"""
             )
         else:  # "No"
-            # Does NOT meet qualification criteria (NOT (score = 100 AND age = true))
+            # Does NOT meet qualification criteria (NOT (final_score = 100 AND age_score = 50))
             where.append(
                 """site_id NOT IN (
-                    -- Sites with Module 9 scores that are qualified
-                    SELECT sqr.site_id
-                    FROM site_qualification_results sqr
-                    WHERE sqr.analyzed_at = (
+                    -- Get latest completed run per site
+                    WITH latest_runs AS (
+                        SELECT site_id, run_id,
+                               ROW_NUMBER() OVER (PARTITION BY site_id ORDER BY completed_at DESC) as rn
+                        FROM orchestration_runs
+                        WHERE completed_at IS NOT NULL
+                    )
+                    SELECT lr.site_id
+                    FROM latest_runs lr
+                    JOIN site_qualification_results sqr ON lr.site_id = sqr.site_id
+                    LEFT JOIN orchestration_module_results omr
+                        ON lr.run_id = omr.run_id
+                        AND omr.module_name LIKE '%Age Qualification%'
+                    WHERE lr.rn = 1
+                    AND sqr.analyzed_at = (
                         SELECT MAX(analyzed_at)
                         FROM site_qualification_results
-                        WHERE site_id = sqr.site_id
+                        WHERE site_id = lr.site_id
                     )
                     AND sqr.final_calculated_score = 100
-                    AND sqr.age_qualified = 1
+                    AND CAST(json_extract(omr.module_result_json, '$.data.score') AS INTEGER) = 50
                 )"""
             )
 
@@ -664,31 +688,38 @@ def overview_table(where_sql: str, params: list):
         )
         historical_use_map = {str(r.site_id): r.historical_use_category for _, r in historical_use_rows.iterrows()} if not historical_use_rows.empty else {}
 
-        # Get age check status for all sites in the current page (from site_qualification_results)
-        # Get only the latest qualification result per site
+        # Get age check score for all sites in the current page (from Module 9b JSON)
+        # Uses the SAME logic as FastHTML view_results.py - gets age_score from Module 9b JSON of latest run
         age_check_rows = query_df(
             f"""
             WITH filtered_sites AS (
               SELECT site_id FROM site_overview {where_sql}
+            ),
+            latest_runs AS (
+                SELECT site_id, run_id,
+                       ROW_NUMBER() OVER (PARTITION BY site_id ORDER BY completed_at DESC) as rn
+                FROM orchestration_runs
+                WHERE completed_at IS NOT NULL
+                AND site_id IN (SELECT site_id FROM filtered_sites)
             )
-            SELECT sqr.site_id, sqr.age_qualified
-            FROM site_qualification_results sqr
-            WHERE sqr.site_id IN (SELECT site_id FROM filtered_sites)
-            AND sqr.analyzed_at = (
-                SELECT MAX(analyzed_at)
-                FROM site_qualification_results
-                WHERE site_id = sqr.site_id
-            )
+            SELECT
+                lr.site_id,
+                CAST(json_extract(omr.module_result_json, '$.data.score') AS INTEGER) as age_score
+            FROM latest_runs lr
+            LEFT JOIN orchestration_module_results omr
+                ON lr.run_id = omr.run_id
+                AND omr.module_name LIKE '%Age Qualification%'
+            WHERE lr.rn = 1
             """,
             params,
         )
-        # Convert boolean to "Passed"/"Failed" text
+        # Convert age_score to "Passed"/"Failed" text (Passed if score == 50)
         age_check_map = {}
         if not age_check_rows.empty:
             for _, r in age_check_rows.iterrows():
                 sid = str(r.site_id)
-                if r.age_qualified is not None:
-                    age_check_map[sid] = "Passed" if r.age_qualified else "Failed"
+                if r.age_score is not None:
+                    age_check_map[sid] = "Passed" if r.age_score == 50 else "Failed"
                 else:
                     age_check_map[sid] = None
 
