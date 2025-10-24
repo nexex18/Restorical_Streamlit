@@ -158,12 +158,12 @@ def build_site_filters_ui():
             with right_col1:
                 processed_filter = st.selectbox("Processed for qualification", ["All", "Yes", "No"], index=0, key="processed_select")
 
-                # Contact Eligibility filter - single dropdown
-                site_status_filter = st.selectbox("Contact Eligibility",
-                                                 ["All", "Eligible", "DO_NOT_CONTACT"],
-                                                 index=0,
-                                                 key="site_status_select",
-                                                 help="All: Show all sites | Eligible: Exclude DO_NOT_CONTACT sites | DO_NOT_CONTACT: Show only DO_NOT_CONTACT sites")
+                # Age Check filter - single dropdown
+                age_check_filter = st.selectbox("Age Check Score",
+                                                ["All", "0", "50"],
+                                                index=0,
+                                                key="age_check_select",
+                                                help="All: Show all sites | 0: Sites with age score 0 | 50: Sites with age score 50")
 
             with right_col2:
                 # Historical Use filter
@@ -244,32 +244,16 @@ def build_site_filters_ui():
             "site_id IN (SELECT site_id FROM site_summary WHERE COALESCE(has_narrative_content,0) = ?)"
         )
         params.append(1 if has_narr == "Yes" else 0)
-    # Filter by site status
-    if 'site_status_filter' in locals():
-        if site_status_filter == "Eligible":
-            # Exclude DO_NOT_CONTACT sites
-            where.append(
-                """site_id NOT IN (
-                    SELECT DISTINCT or1.site_id
-                    FROM orchestration_runs or1
-                    JOIN orchestration_module_results omr ON or1.run_id = omr.run_id
-                    WHERE omr.module_name LIKE '%Disqualification%'
-                    AND json_extract(omr.module_result_json, '$.data.qualified') = 0
-                    AND json_extract(omr.module_result_json, '$.data.disqualification_reason') = 'DO_NOT_CONTACT'
-                )"""
-            )
-        elif site_status_filter == "DO_NOT_CONTACT":
-            # Show only DO_NOT_CONTACT sites
-            where.append(
-                """site_id IN (
-                    SELECT DISTINCT or1.site_id
-                    FROM orchestration_runs or1
-                    JOIN orchestration_module_results omr ON or1.run_id = omr.run_id
-                    WHERE omr.module_name LIKE '%Disqualification%'
-                    AND json_extract(omr.module_result_json, '$.data.qualified') = 0
-                    AND json_extract(omr.module_result_json, '$.data.disqualification_reason') = 'DO_NOT_CONTACT'
-                )"""
-            )
+    # Filter by age check score
+    if 'age_check_filter' in locals() and age_check_filter != "All":
+        where.append(
+            """site_id IN (
+                SELECT site_id
+                FROM site_summary
+                WHERE age_evidence_confidence_score = ?
+            )"""
+        )
+        params.append(int(age_check_filter))
 
     # Filter by selected batch names
     if 'selected_batches' in locals() and selected_batches:
@@ -715,6 +699,20 @@ def overview_table(where_sql: str, params: list):
         )
         historical_use_map = {str(r.site_id): r.historical_use_category for _, r in historical_use_rows.iterrows()} if not historical_use_rows.empty else {}
 
+        # Get age check scores for all sites in the current page
+        age_score_rows = query_df(
+            f"""
+            WITH filtered_sites AS (
+              SELECT site_id FROM site_overview {where_sql}
+            )
+            SELECT ss.site_id, ss.age_evidence_confidence_score
+            FROM site_summary ss
+            WHERE ss.site_id IN (SELECT site_id FROM filtered_sites)
+            """,
+            params,
+        )
+        age_score_map = {str(r.site_id): r.age_evidence_confidence_score for _, r in age_score_rows.iterrows()} if not age_score_rows.empty else {}
+
         # Insert Historical Use as the 3rd column (after site_name)
         try:
             historical_use = df_display["site_id"].astype(str).map(lambda sid: historical_use_map.get(sid, None))
@@ -736,6 +734,13 @@ def overview_table(where_sql: str, params: list):
         except Exception:
             overall_scores = df_display["site_id"].map(lambda sid: score_map.get(str(sid), None))
         df_display.insert(insert_pos + 2, "Final Score", overall_scores)
+
+        # Insert Age Check Score as the 6th column (after Final Score)
+        try:
+            age_scores = df_display["site_id"].astype(str).map(lambda sid: age_score_map.get(sid, None))
+        except Exception:
+            age_scores = df_display["site_id"].map(lambda sid: age_score_map.get(str(sid), None))
+        df_display.insert(insert_pos + 3, "Age Check Score", age_scores)
 
         # Add per-row Process link for sites with Final Score == 0
         api_base = os.environ.get("PROCESS_API_BASE", "http://localhost:5001").rstrip("/")
@@ -833,7 +838,7 @@ def overview_table(where_sql: str, params: list):
             
             process_links = df_display.apply(make_process_link, axis=1)
 
-        df_display.insert(insert_pos + 3, "Process", process_links)
+        df_display.insert(insert_pos + 4, "Process", process_links)
         
         # Add QC column for processed sites
         def make_qc_link(r):
@@ -851,9 +856,9 @@ def overview_table(where_sql: str, params: list):
                     return f"{fasthtml_url}/results/{site_id}"
             except:
                 return ""
-        
+
         qc_links = df_display.apply(make_qc_link, axis=1)
-        df_display.insert(insert_pos + 4, "QC", qc_links)
+        df_display.insert(insert_pos + 5, "QC", qc_links)
         
         # Add Feedback count column with links
         def make_feedback_cell(r):
@@ -867,9 +872,9 @@ def overview_table(where_sql: str, params: list):
                     return ""
             except:
                 return ""
-        
+
         feedback_links = df_display.apply(make_feedback_cell, axis=1)
-        df_display.insert(insert_pos + 5, "Feedback", feedback_links)
+        df_display.insert(insert_pos + 6, "Feedback", feedback_links)
 
         st.dataframe(
             df_display,
@@ -891,6 +896,11 @@ def overview_table(where_sql: str, params: list):
                 "Final Score": st.column_config.NumberColumn(
                     label="Final Score",
                     help="Latest Score Calculation module final score",
+                    format="%d",
+                ),
+                "Age Check Score": st.column_config.NumberColumn(
+                    label="Age Check Score",
+                    help="Age evidence confidence score from Module 9 analysis",
                     format="%d",
                 ),
                 "Process": st.column_config.LinkColumn(
