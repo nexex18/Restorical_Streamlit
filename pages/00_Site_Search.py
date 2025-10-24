@@ -248,9 +248,14 @@ def build_site_filters_ui():
     if 'age_check_filter' in locals() and age_check_filter != "All":
         where.append(
             """site_id IN (
-                SELECT site_id
-                FROM site_qualification_results
-                WHERE age_qualified = ?
+                SELECT sqr.site_id
+                FROM site_qualification_results sqr
+                WHERE sqr.analyzed_at = (
+                    SELECT MAX(analyzed_at)
+                    FROM site_qualification_results
+                    WHERE site_id = sqr.site_id
+                )
+                AND sqr.age_qualified = ?
             )"""
         )
         params.append(1 if age_check_filter == "Passed" else 0)
@@ -700,6 +705,7 @@ def overview_table(where_sql: str, params: list):
         historical_use_map = {str(r.site_id): r.historical_use_category for _, r in historical_use_rows.iterrows()} if not historical_use_rows.empty else {}
 
         # Get age check status for all sites in the current page (from site_qualification_results)
+        # Get only the latest qualification result per site
         age_check_rows = query_df(
             f"""
             WITH filtered_sites AS (
@@ -708,6 +714,11 @@ def overview_table(where_sql: str, params: list):
             SELECT sqr.site_id, sqr.age_qualified
             FROM site_qualification_results sqr
             WHERE sqr.site_id IN (SELECT site_id FROM filtered_sites)
+            AND sqr.analyzed_at = (
+                SELECT MAX(analyzed_at)
+                FROM site_qualification_results
+                WHERE site_id = sqr.site_id
+            )
             """,
             params,
         )
