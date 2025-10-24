@@ -158,12 +158,12 @@ def build_site_filters_ui():
             with right_col1:
                 processed_filter = st.selectbox("Processed for qualification", ["All", "Yes", "No"], index=0, key="processed_select")
 
-                # Age Check filter - single dropdown
-                age_check_filter = st.selectbox("Age Check",
-                                                ["All", "Passed", "Failed"],
+                # Qualified filter - single dropdown (Final Score = 100 AND age_qualified = true)
+                qualified_filter = st.selectbox("Qualified",
+                                                ["All", "Yes", "No"],
                                                 index=0,
-                                                key="age_check_select",
-                                                help="All: Show all sites | Passed: Age qualification passed | Failed: Age qualification failed")
+                                                key="qualified_select",
+                                                help="All: Show all sites | Yes: Final Score = 100 AND Age Check passed | No: Does not meet qualification criteria")
 
             with right_col2:
                 # Historical Use filter
@@ -244,21 +244,39 @@ def build_site_filters_ui():
             "site_id IN (SELECT site_id FROM site_summary WHERE COALESCE(has_narrative_content,0) = ?)"
         )
         params.append(1 if has_narr == "Yes" else 0)
-    # Filter by age check (from site_qualification_results.age_qualified)
-    if 'age_check_filter' in locals() and age_check_filter != "All":
-        where.append(
-            """site_id IN (
-                SELECT sqr.site_id
-                FROM site_qualification_results sqr
-                WHERE sqr.analyzed_at = (
-                    SELECT MAX(analyzed_at)
-                    FROM site_qualification_results
-                    WHERE site_id = sqr.site_id
-                )
-                AND sqr.age_qualified = ?
-            )"""
-        )
-        params.append(1 if age_check_filter == "Passed" else 0)
+    # Filter by qualified status (Final Score = 100 AND age_qualified = true)
+    if 'qualified_filter' in locals() and qualified_filter != "All":
+        if qualified_filter == "Yes":
+            # Must have Final Score = 100 AND age_qualified = true (Module 9 only for simplicity)
+            where.append(
+                """site_id IN (
+                    SELECT sqr.site_id
+                    FROM site_qualification_results sqr
+                    WHERE sqr.analyzed_at = (
+                        SELECT MAX(analyzed_at)
+                        FROM site_qualification_results
+                        WHERE site_id = sqr.site_id
+                    )
+                    AND sqr.final_calculated_score = 100
+                    AND sqr.age_qualified = 1
+                )"""
+            )
+        else:  # "No"
+            # Does NOT meet qualification criteria (NOT (score = 100 AND age = true))
+            where.append(
+                """site_id NOT IN (
+                    -- Sites with Module 9 scores that are qualified
+                    SELECT sqr.site_id
+                    FROM site_qualification_results sqr
+                    WHERE sqr.analyzed_at = (
+                        SELECT MAX(analyzed_at)
+                        FROM site_qualification_results
+                        WHERE site_id = sqr.site_id
+                    )
+                    AND sqr.final_calculated_score = 100
+                    AND sqr.age_qualified = 1
+                )"""
+            )
 
     # Filter by selected batch names
     if 'selected_batches' in locals() and selected_batches:
