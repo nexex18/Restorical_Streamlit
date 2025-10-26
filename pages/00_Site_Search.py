@@ -723,6 +723,27 @@ def overview_table(where_sql: str, params: list):
                 else:
                     age_check_map[sid] = None
 
+        # Get age confidence scores from site_summary
+        age_confidence_rows = query_df(
+            f"""
+            WITH filtered_sites AS (
+              SELECT site_id FROM site_overview {where_sql}
+            )
+            SELECT ss.site_id, ss.age_evidence_confidence_score
+            FROM site_summary ss
+            WHERE ss.site_id IN (SELECT site_id FROM filtered_sites)
+            """,
+            params,
+        )
+        age_confidence_map = {}
+        if not age_confidence_rows.empty:
+            for _, r in age_confidence_rows.iterrows():
+                sid = str(r.site_id)
+                if r.age_evidence_confidence_score is not None and r.age_evidence_confidence_score > 0:
+                    age_confidence_map[sid] = int(r.age_evidence_confidence_score)
+                else:
+                    age_confidence_map[sid] = None
+
         # Insert Historical Use as the 3rd column (after site_name)
         try:
             historical_use = df_display["site_id"].astype(str).map(lambda sid: historical_use_map.get(sid, None))
@@ -751,6 +772,13 @@ def overview_table(where_sql: str, params: list):
         except Exception:
             age_check = df_display["site_id"].map(lambda sid: age_check_map.get(str(sid), None))
         df_display.insert(insert_pos + 3, "Age Check", age_check)
+
+        # Insert Age Confidence as the 7th column (after Age Check)
+        try:
+            age_confidence = df_display["site_id"].astype(str).map(lambda sid: age_confidence_map.get(sid, None))
+        except Exception:
+            age_confidence = df_display["site_id"].map(lambda sid: age_confidence_map.get(str(sid), None))
+        df_display.insert(insert_pos + 4, "Age Confidence", age_confidence)
 
         # Add per-row Process link for sites with Final Score == 0
         api_base = os.environ.get("PROCESS_API_BASE", "http://localhost:5001").rstrip("/")
@@ -848,8 +876,8 @@ def overview_table(where_sql: str, params: list):
             
             process_links = df_display.apply(make_process_link, axis=1)
 
-        df_display.insert(insert_pos + 4, "Process", process_links)
-        
+        df_display.insert(insert_pos + 5, "Process", process_links)
+
         # Add QC column for processed sites
         def make_qc_link(r):
             try:
@@ -868,8 +896,8 @@ def overview_table(where_sql: str, params: list):
                 return ""
 
         qc_links = df_display.apply(make_qc_link, axis=1)
-        df_display.insert(insert_pos + 5, "QC", qc_links)
-        
+        df_display.insert(insert_pos + 6, "QC", qc_links)
+
         # Add Feedback count column with links
         def make_feedback_cell(r):
             try:
@@ -884,7 +912,7 @@ def overview_table(where_sql: str, params: list):
                 return ""
 
         feedback_links = df_display.apply(make_feedback_cell, axis=1)
-        df_display.insert(insert_pos + 6, "Feedback", feedback_links)
+        df_display.insert(insert_pos + 7, "Feedback", feedback_links)
 
         st.dataframe(
             df_display,
@@ -911,6 +939,11 @@ def overview_table(where_sql: str, params: list):
                 "Age Check": st.column_config.TextColumn(
                     label="Age Check",
                     help="Age Qualification status: Passed or Failed",
+                ),
+                "Age Confidence": st.column_config.NumberColumn(
+                    label="Age Confidence",
+                    help="Age evidence confidence score (0-100%)",
+                    format="%d%%",
                 ),
                 "Process": st.column_config.LinkColumn(
                     label="Process",
