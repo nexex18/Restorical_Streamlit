@@ -183,6 +183,16 @@ def build_site_filters_ui():
                     help="Filter sites by their historical use category from Module 9 analysis"
                 )
 
+                # Age Confidence filter
+                age_confidence_options = [95, 85, 70, 60, 50, 0]
+                selected_age_confidence = st.multiselect(
+                    "Age Confidence %",
+                    options=age_confidence_options,
+                    default=[],
+                    key="age_confidence_select",
+                    help="Filter sites by age qualification confidence level"
+                )
+
         # Batch Names filter (full width in right column)
         with right_col:
             batch_df = get_cached_data("""
@@ -383,6 +393,27 @@ def build_site_filters_ui():
             )
         """)
         params.extend(selected_historical_use)
+
+    # Filter by age confidence
+    if 'selected_age_confidence' in locals() and selected_age_confidence:
+        placeholders = ",".join(["?" for _ in selected_age_confidence])
+        where.append(f"""
+            site_id IN (
+                SELECT lr.site_id
+                FROM (
+                    SELECT site_id, run_id,
+                           ROW_NUMBER() OVER (PARTITION BY site_id ORDER BY completed_at DESC) as rn
+                    FROM orchestration_runs
+                    WHERE completed_at IS NOT NULL
+                ) lr
+                LEFT JOIN orchestration_module_results omr
+                    ON lr.run_id = omr.run_id
+                    AND omr.module_name LIKE '%Age Qualification%'
+                WHERE lr.rn = 1
+                AND CAST(json_extract(omr.module_result_json, '$.data.age_confidence') AS INTEGER) IN ({placeholders})
+            )
+        """)
+        params.extend(selected_age_confidence)
 
     where_sql = ("WHERE " + " AND ".join(where)) if where else ""
     return where_sql, params
