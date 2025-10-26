@@ -723,15 +723,27 @@ def overview_table(where_sql: str, params: list):
                 else:
                     age_check_map[sid] = None
 
-        # Get age confidence scores from site_summary
+        # Get age confidence scores from Age Qualification module JSON
         age_confidence_rows = query_df(
             f"""
             WITH filtered_sites AS (
               SELECT site_id FROM site_overview {where_sql}
+            ),
+            latest_runs AS (
+                SELECT site_id, run_id,
+                       ROW_NUMBER() OVER (PARTITION BY site_id ORDER BY completed_at DESC) as rn
+                FROM orchestration_runs
+                WHERE completed_at IS NOT NULL
+                AND site_id IN (SELECT site_id FROM filtered_sites)
             )
-            SELECT ss.site_id, ss.age_evidence_confidence_score
-            FROM site_summary ss
-            WHERE ss.site_id IN (SELECT site_id FROM filtered_sites)
+            SELECT
+                lr.site_id,
+                CAST(json_extract(omr.module_result_json, '$.data.age_confidence') AS INTEGER) as age_confidence
+            FROM latest_runs lr
+            LEFT JOIN orchestration_module_results omr
+                ON lr.run_id = omr.run_id
+                AND omr.module_name LIKE '%Age Qualification%'
+            WHERE lr.rn = 1
             """,
             params,
         )
@@ -739,8 +751,8 @@ def overview_table(where_sql: str, params: list):
         if not age_confidence_rows.empty:
             for _, r in age_confidence_rows.iterrows():
                 sid = str(r.site_id)
-                if r.age_evidence_confidence_score is not None and r.age_evidence_confidence_score > 0:
-                    age_confidence_map[sid] = int(r.age_evidence_confidence_score)
+                if r.age_confidence is not None and r.age_confidence > 0:
+                    age_confidence_map[sid] = int(r.age_confidence)
                 else:
                     age_confidence_map[sid] = None
 
