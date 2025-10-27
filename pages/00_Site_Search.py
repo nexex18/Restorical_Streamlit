@@ -732,32 +732,20 @@ def overview_table(where_sql: str, params: list):
         df_display = df.copy()
         df_display.insert(0, "Site Detail", detail_col)
 
-        # Extract Lead ID from SFDC URL and insert at position 2 (after site_id)
-        def extract_lead_id(url):
-            """Extract Lead ID from Salesforce URL like https://restorical.lightning.force.com/lightning/r/Lead/00Q8c00000Test123/view"""
-            if not url or pd.isna(url):
-                return None
-            url_str = str(url)
-            # Look for pattern: /Lead/{ID}/
-            if '/Lead/' in url_str:
-                try:
-                    # Split on /Lead/ and take what comes after
-                    parts = url_str.split('/Lead/')
-                    if len(parts) > 1:
-                        # Take the next segment (before the next /)
-                        lead_id = parts[1].split('/')[0]
-                        return lead_id if lead_id else None
-                except Exception:
-                    return None
-            return None
-
+        # Create SFDC Lead column as clickable link
+        # Note: Streamlit's LinkColumn shows the full URL since it doesn't support per-row display text
+        # We'll keep the URL in the column and configure it as a link
         try:
-            lead_ids = df_display["sfdc_lead_url"].apply(extract_lead_id)
+            # Keep the URL for linking
+            lead_id_links = df_display["sfdc_lead_url"].apply(
+                lambda url: url if (url and not pd.isna(url)) else None
+            )
         except Exception:
-            lead_ids = pd.Series([None] * len(df_display))
-        df_display.insert(2, "Lead ID", lead_ids)
+            lead_id_links = pd.Series([None] * len(df_display))
 
-        # Drop the sfdc_lead_url column since we only want to show the Lead ID
+        df_display.insert(2, "SFDC Lead", lead_id_links)
+
+        # Drop the original sfdc_lead_url column
         if "sfdc_lead_url" in df_display.columns:
             df_display = df_display.drop(columns=["sfdc_lead_url"])
 
@@ -1027,6 +1015,10 @@ def overview_table(where_sql: str, params: list):
                 "Site Detail": st.column_config.LinkColumn(
                     label="Site Detail",
                     display_text="Open",
+                ),
+                "SFDC Lead": st.column_config.LinkColumn(
+                    label="SFDC Lead",
+                    help="Click to open Salesforce Lead record"
                 ),
                 "Historical Use": st.column_config.TextColumn(
                     label="Historical Use",
