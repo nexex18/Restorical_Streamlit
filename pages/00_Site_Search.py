@@ -224,6 +224,14 @@ def build_site_filters_ui():
                     for _, row in selected_info.iterrows():
                         st.caption(f"📦 **{row['batch_name']}**: {row['batch_description']} ({row['total_sites']} sites)")
 
+            # Has SFDC Lead filter
+            has_sfdc_lead = st.checkbox(
+                "Has SFDC Lead",
+                value=False,
+                key="sfdc_lead_checkbox",
+                help="Filter to show only sites with a Salesforce Lead URL"
+            )
+
     where, params = [], []
     if q:
         like = f"%{q}%"
@@ -414,6 +422,10 @@ def build_site_filters_ui():
             )
         """)
         params.extend(selected_age_confidence)
+
+    # Filter by SFDC Lead URL
+    if 'has_sfdc_lead' in locals() and has_sfdc_lead:
+        where.append("s.sfdc_lead_url IS NOT NULL")
 
     where_sql = ("WHERE " + " AND ".join(where)) if where else ""
     return where_sql, params
