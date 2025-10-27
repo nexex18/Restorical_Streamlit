@@ -1,6 +1,7 @@
 import streamlit as st
 import json
-from app_lib.db import query_df, db_exists
+import datetime
+from app_lib.db import query_df, db_exists, execute_query
 
 st.set_page_config(page_title="Site Detail", page_icon="🧭", layout="wide")
 
@@ -814,6 +815,91 @@ def ownership_history_tab(site_id: str):
     st.dataframe(df, use_container_width=True, height=400)
 
 
+def sfdc_lead_tab(site_id: str):
+    st.subheader("Salesforce Lead URL")
+
+    # Query current SFDC Lead URL for this site
+    sfdc_data = query_df(
+        """
+        SELECT sfdc_lead_url, sfdc_lead_url_updated_at
+        FROM sites
+        WHERE site_id = ?
+        """,
+        [site_id],
+    )
+
+    current_url = None
+    updated_at = None
+    if not sfdc_data.empty and sfdc_data.iloc[0].sfdc_lead_url:
+        current_url = sfdc_data.iloc[0].sfdc_lead_url
+        updated_at = sfdc_data.iloc[0].sfdc_lead_url_updated_at
+
+    # Display current URL if exists
+    if current_url:
+        st.markdown(f"**Current URL:** [{current_url}]({current_url})")
+        if updated_at:
+            st.caption(f"Last updated: {updated_at}")
+    else:
+        st.info("No SFDC Lead URL set for this site.")
+
+    st.markdown("---")
+
+    # Form to add/edit SFDC Lead URL
+    with st.form(key=f"sfdc_url_form_{site_id}", clear_on_submit=False):
+        new_url = st.text_input(
+            "SFDC Lead URL",
+            value=current_url or "",
+            placeholder="https://restorical.lightning.force.com/lightning/r/Lead/...",
+            help="Enter the Salesforce Lead URL for this site"
+        )
+
+        col1, col2 = st.columns(2)
+        with col1:
+            save_button = st.form_submit_button("💾 Save", use_container_width=True)
+        with col2:
+            clear_button = st.form_submit_button("🗑️ Clear", use_container_width=True)
+
+        if save_button:
+            if new_url and new_url.strip():
+                # Validate URL format (basic check)
+                url_lower = new_url.strip().lower()
+                if url_lower.startswith(('http://', 'https://')):
+                    try:
+                        execute_query(
+                            """
+                            UPDATE sites
+                            SET sfdc_lead_url = ?,
+                                sfdc_lead_url_updated_at = ?
+                            WHERE site_id = ?
+                            """,
+                            [new_url.strip(), datetime.datetime.now().isoformat(), site_id]
+                        )
+                        st.success("✅ SFDC Lead URL saved successfully!")
+                        st.rerun()
+                    except Exception as e:
+                        st.error(f"❌ Error saving URL: {e}")
+                else:
+                    st.error("❌ Invalid URL format. URL must start with http:// or https://")
+            else:
+                st.warning("⚠️ Please enter a URL to save.")
+
+        if clear_button:
+            try:
+                execute_query(
+                    """
+                    UPDATE sites
+                    SET sfdc_lead_url = NULL,
+                        sfdc_lead_url_updated_at = NULL
+                    WHERE site_id = ?
+                    """,
+                    [site_id]
+                )
+                st.success("✅ SFDC Lead URL cleared successfully!")
+                st.rerun()
+            except Exception as e:
+                st.error(f"❌ Error clearing URL: {e}")
+
+
 def run():
     if not db_exists():
         st.error("Database not found at data/ecology_sites.db")
@@ -863,21 +949,23 @@ def run():
         except Exception:
             pass
 
-    tabs = st.tabs(["Overview", "Narratives", "Documents", "Qualifications", "Contaminants", "Contacts", "Ownership History"])
+    tabs = st.tabs(["Overview", "SFDC Lead", "Narratives", "Documents", "Qualifications", "Contaminants", "Contacts", "Ownership History"])
 
     with tabs[0]:
         overview_tab(site_id)
     with tabs[1]:
-        narratives_tab(site_id)
+        sfdc_lead_tab(site_id)
     with tabs[2]:
-        documents_tab(site_id)
+        narratives_tab(site_id)
     with tabs[3]:
-        qualifications_tab(site_id)
+        documents_tab(site_id)
     with tabs[4]:
-        contaminants_tab(site_id)
+        qualifications_tab(site_id)
     with tabs[5]:
-        contacts_tab(site_id)
+        contaminants_tab(site_id)
     with tabs[6]:
+        contacts_tab(site_id)
+    with tabs[7]:
         ownership_history_tab(site_id)
 
 

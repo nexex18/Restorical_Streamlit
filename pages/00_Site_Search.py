@@ -5,7 +5,7 @@ import plotly.express as px
 import requests
 import time
 
-from app_lib.db import query_df, db_exists, DB_PATH
+from app_lib.db import query_df, db_exists, DB_PATH, execute_query
 
 st.set_page_config(page_title="Site Search", page_icon="🔍", layout="wide")
 
@@ -227,21 +227,21 @@ def build_site_filters_ui():
     where, params = [], []
     if q:
         like = f"%{q}%"
-        where.append("(COALESCE(site_name,'') LIKE ? OR COALESCE(site_address,'') LIKE ? OR site_id LIKE ?)")
+        where.append("(COALESCE(so.site_name,'') LIKE ? OR COALESCE(so.site_address,'') LIKE ? OR so.site_id LIKE ?)")
         params += [like, like, like]
     if doc_search:
         where.append("""EXISTS (
             SELECT 1 FROM site_documents sd
-            WHERE sd.site_id = site_overview.site_id
+            WHERE sd.site_id = so.site_id
             AND LOWER(sd.document_title) LIKE LOWER(?)
         )""")
         params.append(f"%{doc_search}%")
     if has_docs != "Any":
-        where.append("has_documents = ?")
+        where.append("so.has_documents = ?")
         params.append(1 if has_docs == "Yes" else 0)
     if has_narr != "Any":
         where.append(
-            "site_id IN (SELECT site_id FROM site_summary WHERE COALESCE(has_narrative_content,0) = ?)"
+            "so.site_id IN (SELECT site_id FROM site_summary WHERE COALESCE(has_narrative_content,0) = ?)"
         )
         params.append(1 if has_narr == "Yes" else 0)
     # Filter by qualified status (Final Score = 100 AND age_score = 50)
@@ -250,7 +250,7 @@ def build_site_filters_ui():
         if qualified_filter == "Yes":
             # Must have Final Score = 100 AND age_score = 50 from Module 9b
             where.append(
-                """site_id IN (
+                """so.site_id IN (
                     -- Get latest completed run per site
                     WITH latest_runs AS (
                         SELECT site_id, run_id,
@@ -277,7 +277,7 @@ def build_site_filters_ui():
         else:  # "No"
             # Does NOT meet qualification criteria (NOT (final_score = 100 AND age_score = 50))
             where.append(
-                """site_id NOT IN (
+                """so.site_id NOT IN (
                     -- Get latest completed run per site
                     WITH latest_runs AS (
                         SELECT site_id, run_id,
@@ -306,7 +306,7 @@ def build_site_filters_ui():
     if 'selected_batches' in locals() and selected_batches:
         batch_placeholders = ",".join(["?" for _ in selected_batches])
         where.append(f"""
-            site_id IN (
+            so.site_id IN (
                 SELECT DISTINCT json_each.value
                 FROM batch_runs, json_each(site_ids)
                 WHERE batch_name IN ({batch_placeholders})
@@ -319,7 +319,7 @@ def build_site_filters_ui():
         if processed_filter == "Yes":
             # Sites that have been processed (have a final_score)
             where.append(
-                """site_id IN (
+                """so.site_id IN (
                     SELECT DISTINCT site_id 
                     FROM orchestration_runs 
                     WHERE completed_at IS NOT NULL 
@@ -333,13 +333,13 @@ def build_site_filters_ui():
         else:  # "No"
             # Sites that have NOT been processed (no final_score)
             where.append(
-                """site_id NOT IN (
-                    SELECT DISTINCT site_id 
-                    FROM orchestration_runs 
-                    WHERE completed_at IS NOT NULL 
+                """so.site_id NOT IN (
+                    SELECT DISTINCT site_id
+                    FROM orchestration_runs
+                    WHERE completed_at IS NOT NULL
                     AND (final_score IS NOT NULL OR EXISTS (
-                        SELECT 1 FROM orchestration_module_results 
-                        WHERE run_id = orchestration_runs.run_id 
+                        SELECT 1 FROM orchestration_module_results
+                        WHERE run_id = orchestration_runs.run_id
                         AND module_name LIKE '%Score Calculation%'
                     ))
                 )"""
@@ -362,23 +362,23 @@ def build_site_filters_ui():
             ors = [f"TRIM(COALESCE({col},'')) <> ''" for col in selected_cols]
             sub_clauses.append("(" + " OR ".join(ors) + ")")
 
-        where.append("site_id IN (SELECT site_id FROM site_contaminants WHERE " + " AND ".join(sub_clauses) + ")")
+        where.append("so.site_id IN (SELECT site_id FROM site_contaminants WHERE " + " AND ".join(sub_clauses) + ")")
         params += sub_params
 
     # Range filters via correlated subqueries to site_summary
     if narr_range != (narr_min, narr_max):
         where.append(
-            "site_id IN (SELECT site_id FROM site_summary WHERE COALESCE(total_narrative_sections,0) BETWEEN ? AND ?)"
+            "so.site_id IN (SELECT site_id FROM site_summary WHERE COALESCE(total_narrative_sections,0) BETWEEN ? AND ?)"
         )
         params += [int(narr_range[0]), int(narr_range[1])]
     if docs_range != (docs_min, docs_max):
         where.append(
-            "site_id IN (SELECT site_id FROM site_summary WHERE COALESCE(total_documents,0) BETWEEN ? AND ?)"
+            "so.site_id IN (SELECT site_id FROM site_summary WHERE COALESCE(total_documents,0) BETWEEN ? AND ?)"
         )
         params += [int(docs_range[0]), int(docs_range[1])]
     if span_range != (span_min, span_max):
         where.append(
-            "site_id IN (SELECT site_id FROM site_summary WHERE COALESCE(document_date_range_years,0) BETWEEN ? AND ?)"
+            "so.site_id IN (SELECT site_id FROM site_summary WHERE COALESCE(document_date_range_years,0) BETWEEN ? AND ?)"
         )
         params += [int(span_range[0]), int(span_range[1])]
 
@@ -386,7 +386,7 @@ def build_site_filters_ui():
     if 'selected_historical_use' in locals() and selected_historical_use:
         placeholders = ",".join(["?" for _ in selected_historical_use])
         where.append(f"""
-            site_id IN (
+            so.site_id IN (
                 SELECT site_id
                 FROM sites
                 WHERE historical_use_category IN ({placeholders})
@@ -398,7 +398,7 @@ def build_site_filters_ui():
     if 'selected_age_confidence' in locals() and selected_age_confidence:
         placeholders = ",".join(["?" for _ in selected_age_confidence])
         where.append(f"""
-            site_id IN (
+            so.site_id IN (
                 SELECT lr.site_id
                 FROM (
                     SELECT site_id, run_id,
@@ -423,7 +423,9 @@ def build_site_filters_ui():
 def get_metrics(where_sql: str, params: tuple):  # tuple for hashability
     sql = f"""
         WITH filtered_sites AS (
-          SELECT site_id FROM site_overview {where_sql}
+          SELECT so.site_id FROM site_overview so
+          LEFT JOIN sites s ON so.site_id = s.site_id
+          {where_sql}
         )
         SELECT
           (SELECT COUNT(*) FROM filtered_sites) AS total_sites,
@@ -446,7 +448,9 @@ def contaminant_chart(where_sql: str, params: list):
     df = query_df(
         f"""
         WITH filtered_sites AS (
-          SELECT site_id FROM site_overview {where_sql}
+          SELECT so.site_id FROM site_overview so
+          LEFT JOIN sites s ON so.site_id = s.site_id
+          {where_sql}
         )
         SELECT contaminant_type, COUNT(*) AS n
         FROM site_contaminants
@@ -471,7 +475,9 @@ def docs_summary(where_sql: str, params: list):
     df = query_df(
         f"""
         WITH filtered_sites AS (
-          SELECT site_id FROM site_overview {where_sql}
+          SELECT so.site_id FROM site_overview so
+          LEFT JOIN sites s ON so.site_id = s.site_id
+          {where_sql}
         )
         SELECT COUNT(*) AS documents,
                SUM(CASE WHEN download_status='success' THEN 1 ELSE 0 END) AS downloaded,
@@ -514,8 +520,9 @@ def overview_table(where_sql: str, params: list):
     # Get total count of sites
     total_count_df = query_df(
         f"""
-        SELECT COUNT(*) as count 
-        FROM site_overview
+        SELECT COUNT(*) as count
+        FROM site_overview so
+        LEFT JOIN sites s ON so.site_id = s.site_id
         {where_sql}
         """,
         params
@@ -530,11 +537,12 @@ def overview_table(where_sql: str, params: list):
     # Query with pagination
     df = query_df(
         f"""
-        SELECT site_id, site_name, site_address, total_documents, total_contaminants,
-               has_documents, has_contaminants, scrape_status, status_icon
-        FROM site_overview
+        SELECT so.site_id, so.site_name, so.site_address, so.total_documents, so.total_contaminants,
+               so.has_documents, so.has_contaminants, so.scrape_status, so.status_icon, s.sfdc_lead_url
+        FROM site_overview so
+        LEFT JOIN sites s ON so.site_id = s.site_id
         {where_sql}
-        ORDER BY CAST(site_id AS INTEGER)
+        ORDER BY CAST(so.site_id AS INTEGER)
         LIMIT {items_per_page}
         OFFSET {offset}
         """,
@@ -565,11 +573,12 @@ def overview_table(where_sql: str, params: list):
                     # Query ALL data without pagination
                     all_df = query_df(
                         f"""
-                        SELECT site_id, site_name, site_address, total_documents, total_contaminants,
-                               has_documents, has_contaminants, scrape_status, status_icon
-                        FROM site_overview
+                        SELECT so.site_id, so.site_name, so.site_address, so.total_documents, so.total_contaminants,
+                               so.has_documents, so.has_contaminants, so.scrape_status, so.status_icon, s.sfdc_lead_url
+                        FROM site_overview so
+                        LEFT JOIN sites s ON so.site_id = s.site_id
                         {where_sql}
-                        ORDER BY CAST(site_id AS INTEGER)
+                        ORDER BY CAST(so.site_id AS INTEGER)
                         """,
                         params,
                     )
@@ -610,7 +619,9 @@ def overview_table(where_sql: str, params: list):
         module9_scores = query_df(
             f"""
             WITH filtered_sites AS (
-              SELECT site_id FROM site_overview {where_sql}
+              SELECT so.site_id FROM site_overview so
+              LEFT JOIN sites s ON so.site_id = s.site_id
+              {where_sql}
             )
             SELECT sqr.site_id, sqr.final_calculated_score, sqr.analyzed_at
             FROM site_qualification_results sqr
@@ -639,7 +650,9 @@ def overview_table(where_sql: str, params: list):
         score_rows = query_df(
             f"""
             WITH filtered_sites AS (
-              SELECT site_id FROM site_overview {where_sql}
+              SELECT so.site_id FROM site_overview so
+              LEFT JOIN sites s ON so.site_id = s.site_id
+              {where_sql}
             ), lr AS (
               SELECT or1.site_id, or1.run_id, or1.final_score AS run_final_score, or1.completed_at
               FROM orchestration_runs or1
@@ -686,7 +699,9 @@ def overview_table(where_sql: str, params: list):
         feedback_rows = query_df(
             f"""
             WITH filtered_sites AS (
-              SELECT site_id FROM site_overview {where_sql}
+              SELECT so.site_id FROM site_overview so
+              LEFT JOIN sites s ON so.site_id = s.site_id
+              {where_sql}
             )
             SELECT site_id, COUNT(*) as feedback_count
             FROM ai_feedback
@@ -705,11 +720,42 @@ def overview_table(where_sql: str, params: list):
         df_display = df.copy()
         df_display.insert(0, "Site Detail", detail_col)
 
+        # Extract Lead ID from SFDC URL and insert at position 2 (after site_id)
+        def extract_lead_id(url):
+            """Extract Lead ID from Salesforce URL like https://restorical.lightning.force.com/lightning/r/Lead/00Q8c00000Test123/view"""
+            if not url or pd.isna(url):
+                return None
+            url_str = str(url)
+            # Look for pattern: /Lead/{ID}/
+            if '/Lead/' in url_str:
+                try:
+                    # Split on /Lead/ and take what comes after
+                    parts = url_str.split('/Lead/')
+                    if len(parts) > 1:
+                        # Take the next segment (before the next /)
+                        lead_id = parts[1].split('/')[0]
+                        return lead_id if lead_id else None
+                except Exception:
+                    return None
+            return None
+
+        try:
+            lead_ids = df_display["sfdc_lead_url"].apply(extract_lead_id)
+        except Exception:
+            lead_ids = pd.Series([None] * len(df_display))
+        df_display.insert(2, "Lead ID", lead_ids)
+
+        # Drop the sfdc_lead_url column since we only want to show the Lead ID
+        if "sfdc_lead_url" in df_display.columns:
+            df_display = df_display.drop(columns=["sfdc_lead_url"])
+
         # Get historical use categories for all sites in the current page
         historical_use_rows = query_df(
             f"""
             WITH filtered_sites AS (
-              SELECT site_id FROM site_overview {where_sql}
+              SELECT so.site_id FROM site_overview so
+              LEFT JOIN sites s ON so.site_id = s.site_id
+              {where_sql}
             )
             SELECT s.site_id, s.historical_use_category
             FROM sites s
@@ -724,7 +770,9 @@ def overview_table(where_sql: str, params: list):
         age_check_rows = query_df(
             f"""
             WITH filtered_sites AS (
-              SELECT site_id FROM site_overview {where_sql}
+              SELECT so.site_id FROM site_overview so
+              LEFT JOIN sites s ON so.site_id = s.site_id
+              {where_sql}
             ),
             latest_runs AS (
                 SELECT site_id, run_id,
@@ -758,7 +806,9 @@ def overview_table(where_sql: str, params: list):
         age_confidence_rows = query_df(
             f"""
             WITH filtered_sites AS (
-              SELECT site_id FROM site_overview {where_sql}
+              SELECT so.site_id FROM site_overview so
+              LEFT JOIN sites s ON so.site_id = s.site_id
+              {where_sql}
             ),
             latest_runs AS (
                 SELECT site_id, run_id,
@@ -787,12 +837,12 @@ def overview_table(where_sql: str, params: list):
                 else:
                     age_confidence_map[sid] = None
 
-        # Insert Historical Use as the 3rd column (after site_name)
+        # Insert Historical Use as the 4th column (after site_name)
         try:
             historical_use = df_display["site_id"].astype(str).map(lambda sid: historical_use_map.get(sid, None))
         except Exception:
             historical_use = df_display["site_id"].map(lambda sid: historical_use_map.get(str(sid), None))
-        insert_pos = 3  # 0: Site Detail, 1: site_id, 2: site_name, 3: Historical Use
+        insert_pos = 4  # 0: Site Detail, 1: site_id, 2: Lead ID, 3: site_name, 4: Historical Use
         df_display.insert(insert_pos, "Historical Use", historical_use)
 
         # Insert Last Processed as the 4th column (after Historical Use)
@@ -1067,7 +1117,9 @@ def main():
     # Get site metrics - use cached query
     sql = f"""
         WITH filtered_sites AS (
-          SELECT site_id FROM site_overview {where_sql}
+          SELECT so.site_id FROM site_overview so
+          LEFT JOIN sites s ON so.site_id = s.site_id
+          {where_sql}
         )
         SELECT
           (SELECT COUNT(*) FROM filtered_sites) AS total_sites,
@@ -1079,7 +1131,9 @@ def main():
     # Get docs metrics - use cached query
     docs_sql = f"""
         WITH filtered_sites AS (
-          SELECT site_id FROM site_overview {where_sql}
+          SELECT so.site_id FROM site_overview so
+          LEFT JOIN sites s ON so.site_id = s.site_id
+          {where_sql}
         )
         SELECT COUNT(*) AS documents,
                SUM(CASE WHEN download_status='success' THEN 1 ELSE 0 END) AS downloaded,

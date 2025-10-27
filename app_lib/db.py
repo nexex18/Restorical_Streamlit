@@ -28,3 +28,12 @@ def query_df(sql: str, params: Optional[Iterable] = None) -> pd.DataFrame:
         df = pd.read_sql_query(sql, conn, params=params)
     return df
 
+
+def execute_query(sql: str, params: Optional[Iterable] = None) -> None:
+    """Execute a SQL write query (INSERT, UPDATE, DELETE)."""
+    params = params or []
+    with _connect() as conn:
+        cursor = conn.cursor()
+        cursor.execute(sql, params)
+        conn.commit()
+
