@@ -724,15 +724,14 @@ def overview_table(where_sql: str, params: list):
         )
         feedback_map = {str(r.site_id): int(r.feedback_count) for _, r in feedback_rows.iterrows()} if not feedback_rows.empty else {}
 
-        # Add link to Site Detail page using query params
+        # Create Site Detail link column (will be inserted later)
         try:
             detail_col = df["site_id"].astype(str).apply(lambda sid: f"{URL_PREFIX}/Site_Detail?site_id={sid}")
         except Exception:
             detail_col = df["site_id"].apply(lambda sid: f"{URL_PREFIX}/Site_Detail?site_id={sid}")
         df_display = df.copy()
-        df_display.insert(0, "Site Detail", detail_col)
 
-        # Create SFDC Lead column as clickable link
+        # Create SFDC Lead link column (will be inserted later)
         # Note: Streamlit's LinkColumn shows the full URL since it doesn't support per-row display text
         # We'll keep the URL in the column and configure it as a link
         try:
@@ -742,8 +741,6 @@ def overview_table(where_sql: str, params: list):
             )
         except Exception:
             lead_id_links = pd.Series([None] * len(df_display))
-
-        df_display.insert(2, "SFDC Lead", lead_id_links)
 
         # Drop the original sfdc_lead_url column
         if "sfdc_lead_url" in df_display.columns:
@@ -837,64 +834,48 @@ def overview_table(where_sql: str, params: list):
                 else:
                     age_confidence_map[sid] = None
 
-        # Insert Historical Use as the 4th column (after site_name)
-        try:
-            historical_use = df_display["site_id"].astype(str).map(lambda sid: historical_use_map.get(sid, None))
-        except Exception:
-            historical_use = df_display["site_id"].map(lambda sid: historical_use_map.get(str(sid), None))
-        insert_pos = 4  # 0: Site Detail, 1: site_id, 2: Lead ID, 3: site_name, 4: Historical Use
-        df_display.insert(insert_pos, "Historical Use", historical_use)
+        # Create QC (Milo Report) links for processed sites
+        def make_qc_link(r):
+            try:
+                score = score_map.get(str(r['site_id']), None)
+                site_id = str(r['site_id'])
+                # Only show QC link if site has been processed (has a score)
+                if score is None:
+                    return ""  # Not processed, no QC link
+                else:
+                    # Has a score (including 0), show QC link to view results
+                    # Use PUBLIC_FASTHTML_URL directly - should be set to full URL in production
+                    # e.g., "http://162.243.186.65/fasthtml"
+                    fasthtml_url = os.environ.get("PUBLIC_FASTHTML_URL", "/fasthtml").rstrip("/")
+                    return f"{fasthtml_url}/results/{site_id}"
+            except:
+                return ""
 
-        # Insert Last Processed as the 4th column (after Historical Use)
-        try:
-            last_processed = df_display["site_id"].astype(str).map(lambda sid: last_processed_map.get(sid, None))
-        except Exception:
-            last_processed = df_display["site_id"].map(lambda sid: last_processed_map.get(str(sid), None))
-        df_display.insert(insert_pos + 1, "Last Processed", last_processed)
+        qc_links = df_display.apply(make_qc_link, axis=1)
 
-        # Insert Final Score as the 5th column (after Last Processed)
-        try:
-            overall_scores = df_display["site_id"].astype(str).map(lambda sid: score_map.get(sid, None))
-        except Exception:
-            overall_scores = df_display["site_id"].map(lambda sid: score_map.get(str(sid), None))
-        df_display.insert(insert_pos + 2, "Final Score", overall_scores)
-
-        # Insert Age Check as the 6th column (after Final Score)
-        try:
-            age_check = df_display["site_id"].astype(str).map(lambda sid: age_check_map.get(sid, None))
-        except Exception:
-            age_check = df_display["site_id"].map(lambda sid: age_check_map.get(str(sid), None))
-        df_display.insert(insert_pos + 3, "Age Check", age_check)
-
-        # Insert Age Confidence as the 7th column (after Age Check)
-        try:
-            age_confidence = df_display["site_id"].astype(str).map(lambda sid: age_confidence_map.get(sid, None))
-        except Exception:
-            age_confidence = df_display["site_id"].map(lambda sid: age_confidence_map.get(str(sid), None))
-        df_display.insert(insert_pos + 4, "Age Confidence", age_confidence)
-
+        # Create Process links for unprocessed sites
         # Add per-row Process link for sites with Final Score == 0
         api_base = os.environ.get("PROCESS_API_BASE", "http://localhost:5001").rstrip("/")
         api_token = os.environ.get("PROCESS_API_TOKEN", "secret123")
-        
+
         # Check if any site is being processed (using session state with timestamp)
         if 'processing_site' not in st.session_state:
             st.session_state.processing_site = None
         if 'processing_until' not in st.session_state:
             st.session_state.processing_until = None
-        
+
         # Check if processing timeout has expired
         import datetime
         if st.session_state.processing_until:
             if datetime.datetime.now() > st.session_state.processing_until:
                 st.session_state.processing_site = None
                 st.session_state.processing_until = None
-        
+
         # Handle process button clicks via query params
         query_params = st.query_params
         if 'process_site' in query_params:
             site_to_process = query_params['process_site']
-            
+
             # Check if we're still within the processing window
             if st.session_state.processing_until and datetime.datetime.now() < st.session_state.processing_until:
                 st.warning(f"⏳ A site is already being processed. Please wait until {st.session_state.processing_until.strftime('%H:%M:%S')} before processing another site.")
@@ -904,13 +885,13 @@ def overview_table(where_sql: str, params: list):
                 st.session_state.processing_until = datetime.datetime.now() + datetime.timedelta(minutes=10)
                 # Clear the query param
                 st.query_params.clear()
-                
+
                 # Process the site with spinner
                 with st.spinner(f"Processing Site {site_to_process}..."):
                     try:
                         url = f"{api_base}/api/process/{site_to_process}?token={api_token}"
                         response = requests.post(url, timeout=5)
-                        
+
                         if response.status_code == 200:
                             st.success(f"✅ Site {site_to_process} has been queued for processing. Processing can take up to 10 minutes. Please refresh the page to see updated results.")
                             time.sleep(3)
@@ -929,69 +910,47 @@ def overview_table(where_sql: str, params: list):
                         # Clear the lock on error
                         st.session_state.processing_site = None
                         st.session_state.processing_until = None
-        
+
         # Create process links that use query params instead of direct API calls
         # Check if we're in a processing window
         is_processing = st.session_state.processing_until and datetime.datetime.now() < st.session_state.processing_until
-        
+
         if is_processing:
             # Show remaining time
             remaining = st.session_state.processing_until - datetime.datetime.now()
             remaining_minutes = int(remaining.total_seconds() / 60)
             remaining_seconds = int(remaining.total_seconds() % 60)
-            
+
             # Show disabled state for all process links
             def make_disabled_link(r):
                 try:
-                    score = r.get("Final Score")
-                    # Only show process link if score is NaN or None (not processed)
-                    if pd.isna(score) or score is None:
+                    score = score_map.get(str(r['site_id']), None)
+                    # Only show process link if score is None (not processed)
+                    if score is None:
                         return f"⏳ Wait {remaining_minutes}m {remaining_seconds}s"
                     else:
                         return ""  # Has a score (including 0), so no process link
                 except:
                     return f"⏳ Wait {remaining_minutes}m {remaining_seconds}s"
-            
+
             process_links = df_display.apply(make_disabled_link, axis=1)
         else:
             # Normal process links (only for unprocessed sites)
             def make_process_link(r):
                 try:
-                    score = r.get("Final Score")
+                    score = score_map.get(str(r['site_id']), None)
                     site_id = str(r['site_id'])
-                    # Only show process link if score is NaN or None (not processed)
-                    if pd.isna(score) or score is None:
+                    # Only show process link if score is None (not processed)
+                    if score is None:
                         return f"?process_site={site_id}"
                     else:
                         return ""  # Has a score, no process link
                 except:
                     return f"?process_site={str(r['site_id'])}"
-            
+
             process_links = df_display.apply(make_process_link, axis=1)
 
-        df_display.insert(insert_pos + 5, "Process", process_links)
-
-        # Add QC column for processed sites
-        def make_qc_link(r):
-            try:
-                score = r.get("Final Score")
-                site_id = str(r['site_id'])
-                # Only show QC link if site has been processed (has a score)
-                if pd.isna(score) or score is None:
-                    return ""  # Not processed, no QC link
-                else:
-                    # Has a score (including 0), show QC link to view results
-                    # Use PUBLIC_FASTHTML_URL directly - should be set to full URL in production
-                    # e.g., "http://162.243.186.65/fasthtml"
-                    fasthtml_url = os.environ.get("PUBLIC_FASTHTML_URL", "/fasthtml").rstrip("/")
-                    return f"{fasthtml_url}/results/{site_id}"
-            except:
-                return ""
-
-        qc_links = df_display.apply(make_qc_link, axis=1)
-        df_display.insert(insert_pos + 6, "QC", qc_links)
-
-        # Add Feedback count column with links
+        # Create Feedback links
         def make_feedback_cell(r):
             try:
                 site_id = str(r['site_id'])
@@ -1005,16 +964,74 @@ def overview_table(where_sql: str, params: list):
                 return ""
 
         feedback_links = df_display.apply(make_feedback_cell, axis=1)
-        df_display.insert(insert_pos + 7, "Feedback", feedback_links)
+
+        # Now insert all columns in the desired order
+        # New order: site_id, Milo Report, Site Detail, SFDC Lead, site_name, site_address, ...
+
+        # Insert Milo Report at position 1 (after site_id)
+        df_display.insert(1, "Milo Report", qc_links)
+
+        # Insert Site Detail at position 2
+        df_display.insert(2, "Site Detail", detail_col)
+
+        # Insert SFDC Lead at position 3
+        df_display.insert(3, "SFDC Lead", lead_id_links)
+
+        # site_name is now at position 4, site_address at position 5
+        # Insert Historical Use at position 6 (after site_address)
+        try:
+            historical_use = df_display["site_id"].astype(str).map(lambda sid: historical_use_map.get(sid, None))
+        except Exception:
+            historical_use = df_display["site_id"].map(lambda sid: historical_use_map.get(str(sid), None))
+        df_display.insert(6, "Historical Use", historical_use)
+
+        # Insert Last Processed at position 7 (after Historical Use)
+        try:
+            last_processed = df_display["site_id"].astype(str).map(lambda sid: last_processed_map.get(sid, None))
+        except Exception:
+            last_processed = df_display["site_id"].map(lambda sid: last_processed_map.get(str(sid), None))
+        df_display.insert(7, "Last Processed", last_processed)
+
+        # Insert Final Score at position 8 (after Last Processed)
+        try:
+            overall_scores = df_display["site_id"].astype(str).map(lambda sid: score_map.get(sid, None))
+        except Exception:
+            overall_scores = df_display["site_id"].map(lambda sid: score_map.get(str(sid), None))
+        df_display.insert(8, "Final Score", overall_scores)
+
+        # Insert Age Check at position 9 (after Final Score)
+        try:
+            age_check = df_display["site_id"].astype(str).map(lambda sid: age_check_map.get(sid, None))
+        except Exception:
+            age_check = df_display["site_id"].map(lambda sid: age_check_map.get(str(sid), None))
+        df_display.insert(9, "Age Check", age_check)
+
+        # Insert Age Confidence at position 10 (after Age Check)
+        try:
+            age_confidence = df_display["site_id"].astype(str).map(lambda sid: age_confidence_map.get(sid, None))
+        except Exception:
+            age_confidence = df_display["site_id"].map(lambda sid: age_confidence_map.get(str(sid), None))
+        df_display.insert(10, "Age Confidence", age_confidence)
+
+        # Insert Process at position 11 (after Age Confidence)
+        df_display.insert(11, "Process", process_links)
+
+        # Insert Feedback at position 12 (after Process)
+        df_display.insert(12, "Feedback", feedback_links)
 
         st.dataframe(
             df_display,
             use_container_width=True,
             height=500,
             column_config={
+                "Milo Report": st.column_config.LinkColumn(
+                    label="Milo Report",
+                    display_text="Milo Report",
+                    help="View qualification results for processed sites"
+                ),
                 "Site Detail": st.column_config.LinkColumn(
                     label="Site Detail",
-                    display_text="Open",
+                    display_text="Site Detail",
                 ),
                 "SFDC Lead": st.column_config.LinkColumn(
                     label="SFDC Lead",
@@ -1049,11 +1066,6 @@ def overview_table(where_sql: str, params: list):
                 ) if not is_processing else st.column_config.TextColumn(
                     label="Process",
                     help=f"Processing in progress. Wait until {st.session_state.processing_until.strftime('%H:%M:%S') if st.session_state.processing_until else ''}"
-                ),
-                "QC": st.column_config.LinkColumn(
-                    label="QC",
-                    display_text="QC",
-                    help="View qualification results for processed sites"
                 ),
                 "Feedback": st.column_config.LinkColumn(
                     label="Feedback",
