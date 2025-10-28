@@ -733,12 +733,17 @@ def overview_table(where_sql: str, params: list):
 
         # Create SFDC Lead link column (will be inserted later)
         # Note: Streamlit's LinkColumn shows the full URL since it doesn't support per-row display text
-        # We'll keep the URL in the column and configure it as a link
+        # IGNORE values will be shown as text, URLs as clickable links
+        def format_sfdc_lead(url):
+            if not url or pd.isna(url):
+                return None
+            elif str(url).strip().upper() == "IGNORE":
+                return "IGNORE"  # Will be rendered as text in LinkColumn (non-clickable)
+            else:
+                return url  # Regular URL, rendered as clickable link
+
         try:
-            # Keep the URL for linking
-            lead_id_links = df_display["sfdc_lead_url"].apply(
-                lambda url: url if (url and not pd.isna(url)) else None
-            )
+            lead_id_links = df_display["sfdc_lead_url"].apply(format_sfdc_lead)
         except Exception:
             lead_id_links = pd.Series([None] * len(df_display))
 

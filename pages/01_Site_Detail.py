@@ -834,28 +834,34 @@ def sfdc_lead_tab(site_id: str):
         current_url = sfdc_data.iloc[0].sfdc_lead_url
         updated_at = sfdc_data.iloc[0].sfdc_lead_url_updated_at
 
-    # Display current URL if exists
+    # Display current URL or IGNORED status
     if current_url:
-        st.markdown(f"**Current URL:** [{current_url}]({current_url})")
-        if updated_at:
-            st.caption(f"Last updated: {updated_at}")
+        if current_url.strip().upper() == "IGNORE":
+            st.warning("🚫 **Site marked as IGNORED**")
+            if updated_at:
+                st.caption(f"Status set: {updated_at}")
+        else:
+            st.markdown(f"**Current URL:** [{current_url}]({current_url})")
+            if updated_at:
+                st.caption(f"Last updated: {updated_at}")
     else:
         st.info("No SFDC Lead URL set for this site.")
 
     st.markdown("---")
 
-    # Form to add/edit SFDC Lead URL
+    # Option 1: Add/Edit SFDC Lead URL
+    st.markdown("### Option 1: Add Salesforce Lead URL")
     with st.form(key=f"sfdc_url_form_{site_id}", clear_on_submit=False):
         new_url = st.text_input(
             "SFDC Lead URL",
-            value=current_url or "",
+            value=current_url if current_url and current_url.upper() != "IGNORE" else "",
             placeholder="https://restorical.lightning.force.com/lightning/r/Lead/...",
             help="Enter the Salesforce Lead URL for this site"
         )
 
         col1, col2 = st.columns(2)
         with col1:
-            save_button = st.form_submit_button("💾 Save", use_container_width=True)
+            save_button = st.form_submit_button("💾 Save URL", use_container_width=True)
         with col2:
             clear_button = st.form_submit_button("🗑️ Clear", use_container_width=True)
 
@@ -898,6 +904,27 @@ def sfdc_lead_tab(site_id: str):
                 st.rerun()
             except Exception as e:
                 st.error(f"❌ Error clearing URL: {e}")
+
+    # Option 2: Mark site as IGNORED (outside the form)
+    st.markdown("---")
+    st.markdown("### Option 2: Ignore This Site")
+    st.caption("If you don't plan to create a Salesforce Lead for this site, mark it as ignored.")
+
+    if st.button("🚫 Mark Site as IGNORED", use_container_width=True, type="secondary"):
+        try:
+            execute_query(
+                """
+                UPDATE sites
+                SET sfdc_lead_url = ?,
+                    sfdc_lead_url_updated_at = ?
+                WHERE site_id = ?
+                """,
+                ["IGNORE", datetime.datetime.now().isoformat(), site_id]
+            )
+            st.success("✅ Site marked as IGNORED successfully!")
+            st.rerun()
+        except Exception as e:
+            st.error(f"❌ Error marking site as ignored: {e}")
 
 
 def run():
