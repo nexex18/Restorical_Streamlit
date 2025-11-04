@@ -61,7 +61,21 @@ def build_site_filters_ui():
             with search_col1:
                 q = st.text_input("Search (name, address, site_id)", "", key="search_input")
             with search_col2:
-                doc_search = st.text_input("Search By Document Name", "", key="doc_search_input")
+                # Get unique counties from database (exclude Unknown)
+                county_options = query_df("""
+                    SELECT DISTINCT county
+                    FROM sites
+                    WHERE county IS NOT NULL AND county != 'Unknown'
+                    ORDER BY county
+                """)
+                county_list = county_options["county"].tolist() if not county_options.empty else []
+                selected_counties = st.multiselect(
+                    "Filter by County",
+                    options=county_list,
+                    default=[],
+                    key="county_select",
+                    help="Filter sites by Washington State county"
+                )
             
             # Document and narrative filters
             c1, c2 = st.columns(2)
@@ -237,13 +251,16 @@ def build_site_filters_ui():
         like = f"%{q}%"
         where.append("(COALESCE(so.site_name,'') LIKE ? OR COALESCE(so.site_address,'') LIKE ? OR so.site_id LIKE ?)")
         params += [like, like, like]
-    if doc_search:
-        where.append("""EXISTS (
-            SELECT 1 FROM site_documents sd
-            WHERE sd.site_id = so.site_id
-            AND LOWER(sd.document_title) LIKE LOWER(?)
+
+    # Filter by selected counties
+    if selected_counties:
+        placeholders = ",".join(["?" for _ in selected_counties])
+        where.append(f"""so.site_id IN (
+            SELECT site_id
+            FROM sites
+            WHERE county IN ({placeholders})
         )""")
-        params.append(f"%{doc_search}%")
+        params.extend(selected_counties)
     if has_docs != "Any":
         where.append("so.has_documents = ?")
         params.append(1 if has_docs == "Yes" else 0)
@@ -549,7 +566,7 @@ def overview_table(where_sql: str, params: list):
     # Query with pagination
     df = query_df(
         f"""
-        SELECT so.site_id, so.site_name, so.site_address, so.total_documents, so.total_contaminants,
+        SELECT so.site_id, s.county, so.site_name, so.site_address, so.total_documents, so.total_contaminants,
                so.has_documents, so.has_contaminants, so.scrape_status, so.status_icon, s.sfdc_lead_url
         FROM site_overview so
         LEFT JOIN sites s ON so.site_id = s.site_id
@@ -585,7 +602,7 @@ def overview_table(where_sql: str, params: list):
                     # Query ALL data without pagination
                     all_df = query_df(
                         f"""
-                        SELECT so.site_id, so.site_name, so.site_address, so.total_documents, so.total_contaminants,
+                        SELECT so.site_id, s.county, so.site_name, so.site_address, so.total_documents, so.total_contaminants,
                                so.has_documents, so.has_contaminants, so.scrape_status, so.status_icon, s.sfdc_lead_url
                         FROM site_overview so
                         LEFT JOIN sites s ON so.site_id = s.site_id
