@@ -76,13 +76,33 @@ def build_site_filters_ui():
                     key="county_select",
                     help="Filter sites by Washington State county"
                 )
-            
-            # Document and narrative filters
+
+            # Site Status and Public/Private filters
             c1, c2 = st.columns(2)
             with c1:
-                has_docs = st.selectbox("Has Docs", ["Any", "Yes", "No"], index=0, key="has_docs_select")
+                # Get unique site statuses from database (exclude NULL/empty)
+                status_options = query_df("""
+                    SELECT DISTINCT site_status
+                    FROM site_summary
+                    WHERE site_status IS NOT NULL AND TRIM(site_status) != ''
+                    ORDER BY site_status
+                """)
+                status_list = status_options["site_status"].tolist() if not status_options.empty else []
+                selected_site_statuses = st.multiselect(
+                    "Filter by Site Status",
+                    options=status_list,
+                    default=[],
+                    key="site_status_select",
+                    help="Filter sites by cleanup/remediation status"
+                )
             with c2:
-                has_narr = st.selectbox("Has Narrative", ["Any", "Yes", "No"], index=0, key="has_narr_select")
+                site_type = st.selectbox(
+                    "Public/Private Indicators",
+                    ["Any", "Public", "Private"],
+                    index=0,
+                    key="site_type_select",
+                    help="Public sites contain: COUNTY, LANDFILL, PUBLIC, or CITY in the site name. Private sites do not contain these keywords."
+                )
             
             # Contamination medium filters
             medium_to_col = {
@@ -261,14 +281,35 @@ def build_site_filters_ui():
             WHERE county IN ({placeholders})
         )""")
         params.extend(selected_counties)
-    if has_docs != "Any":
-        where.append("so.has_documents = ?")
-        params.append(1 if has_docs == "Yes" else 0)
-    if has_narr != "Any":
-        where.append(
-            "so.site_id IN (SELECT site_id FROM site_summary WHERE COALESCE(has_narrative_content,0) = ?)"
-        )
-        params.append(1 if has_narr == "Yes" else 0)
+
+    # Filter by selected site statuses
+    if 'selected_site_statuses' in locals() and selected_site_statuses:
+        placeholders = ",".join(["?" for _ in selected_site_statuses])
+        where.append(f"""so.site_id IN (
+            SELECT site_id
+            FROM site_summary
+            WHERE site_status IN ({placeholders})
+        )""")
+        params.extend(selected_site_statuses)
+
+    # Filter by Public/Private site type
+    if 'site_type' in locals() and site_type != "Any":
+        if site_type == "Public":
+            # Public sites contain: COUNTY, LANDFILL, PUBLIC, or CITY in the site name
+            where.append("""(
+                UPPER(COALESCE(so.site_name,'')) LIKE '%COUNTY%' OR
+                UPPER(COALESCE(so.site_name,'')) LIKE '%LANDFILL%' OR
+                UPPER(COALESCE(so.site_name,'')) LIKE '%PUBLIC%' OR
+                UPPER(COALESCE(so.site_name,'')) LIKE '%CITY%'
+            )""")
+        else:  # Private
+            # Private sites do NOT contain these keywords
+            where.append("""(
+                UPPER(COALESCE(so.site_name,'')) NOT LIKE '%COUNTY%' AND
+                UPPER(COALESCE(so.site_name,'')) NOT LIKE '%LANDFILL%' AND
+                UPPER(COALESCE(so.site_name,'')) NOT LIKE '%PUBLIC%' AND
+                UPPER(COALESCE(so.site_name,'')) NOT LIKE '%CITY%'
+            )""")
     # Filter by qualified status (Final Score = 100 AND age_score = 50)
     # Uses the SAME logic as FastHTML view_results.py - gets age_score from Module 9b JSON of latest run
     if 'qualified_filter' in locals() and qualified_filter != "All":
@@ -567,9 +608,10 @@ def overview_table(where_sql: str, params: list):
     df = query_df(
         f"""
         SELECT so.site_id, s.county, so.site_name, so.site_address, so.total_documents, so.total_contaminants,
-               so.has_documents, so.has_contaminants, so.scrape_status, so.status_icon, s.sfdc_lead_url
+               so.has_documents, so.has_contaminants, so.scrape_status, so.status_icon, s.sfdc_lead_url, ss.site_status
         FROM site_overview so
         LEFT JOIN sites s ON so.site_id = s.site_id
+        LEFT JOIN site_summary ss ON so.site_id = ss.site_id
         {where_sql}
         ORDER BY CAST(so.site_id AS INTEGER)
         LIMIT {items_per_page}
@@ -603,9 +645,10 @@ def overview_table(where_sql: str, params: list):
                     all_df = query_df(
                         f"""
                         SELECT so.site_id, s.county, so.site_name, so.site_address, so.total_documents, so.total_contaminants,
-                               so.has_documents, so.has_contaminants, so.scrape_status, so.status_icon, s.sfdc_lead_url
+                               so.has_documents, so.has_contaminants, so.scrape_status, so.status_icon, s.sfdc_lead_url, ss.site_status
                         FROM site_overview so
                         LEFT JOIN sites s ON so.site_id = s.site_id
+                        LEFT JOIN site_summary ss ON so.site_id = ss.site_id
                         {where_sql}
                         ORDER BY CAST(so.site_id AS INTEGER)
                         """,
@@ -988,7 +1031,7 @@ def overview_table(where_sql: str, params: list):
         feedback_links = df_display.apply(make_feedback_cell, axis=1)
 
         # Now insert all columns in the desired order
-        # New order: site_id, Milo Report, Site Detail, SFDC Lead, site_name, site_address, ...
+        # New order: site_id, Milo Report, Site Detail, Site Status, SFDC Lead, site_name, site_address, ...
 
         # Insert Milo Report at position 1 (after site_id)
         df_display.insert(1, "Milo Report", qc_links)
@@ -996,50 +1039,56 @@ def overview_table(where_sql: str, params: list):
         # Insert Site Detail at position 2
         df_display.insert(2, "Site Detail", detail_col)
 
-        # Insert SFDC Lead at position 3
-        df_display.insert(3, "SFDC Lead", lead_id_links)
+        # Insert Site Status at position 3 (after Site Detail) - keep original data from query
+        # Note: site_status is already in df_display from the query, we just need to move it to position 3
+        if "site_status" in df_display.columns:
+            site_status_col = df_display.pop("site_status")
+            df_display.insert(3, "Site Status", site_status_col)
 
-        # site_name is now at position 4, site_address at position 5
-        # Insert Historical Use at position 6 (after site_address)
+        # Insert SFDC Lead at position 4
+        df_display.insert(4, "SFDC Lead", lead_id_links)
+
+        # site_name is now at position 5, site_address at position 6
+        # Insert Historical Use at position 7 (after site_address)
         try:
             historical_use = df_display["site_id"].astype(str).map(lambda sid: historical_use_map.get(sid, None))
         except Exception:
             historical_use = df_display["site_id"].map(lambda sid: historical_use_map.get(str(sid), None))
-        df_display.insert(6, "Historical Use", historical_use)
+        df_display.insert(7, "Historical Use", historical_use)
 
-        # Insert Last Processed at position 7 (after Historical Use)
+        # Insert Last Processed at position 8 (after Historical Use)
         try:
             last_processed = df_display["site_id"].astype(str).map(lambda sid: last_processed_map.get(sid, None))
         except Exception:
             last_processed = df_display["site_id"].map(lambda sid: last_processed_map.get(str(sid), None))
-        df_display.insert(7, "Last Processed", last_processed)
+        df_display.insert(8, "Last Processed", last_processed)
 
-        # Insert Final Score at position 8 (after Last Processed)
+        # Insert Final Score at position 9 (after Last Processed)
         try:
             overall_scores = df_display["site_id"].astype(str).map(lambda sid: score_map.get(sid, None))
         except Exception:
             overall_scores = df_display["site_id"].map(lambda sid: score_map.get(str(sid), None))
-        df_display.insert(8, "Final Score", overall_scores)
+        df_display.insert(9, "Final Score", overall_scores)
 
-        # Insert Age Check at position 9 (after Final Score)
+        # Insert Age Check at position 10 (after Final Score)
         try:
             age_check = df_display["site_id"].astype(str).map(lambda sid: age_check_map.get(sid, None))
         except Exception:
             age_check = df_display["site_id"].map(lambda sid: age_check_map.get(str(sid), None))
-        df_display.insert(9, "Age Check", age_check)
+        df_display.insert(10, "Age Check", age_check)
 
-        # Insert Age Confidence at position 10 (after Age Check)
+        # Insert Age Confidence at position 11 (after Age Check)
         try:
             age_confidence = df_display["site_id"].astype(str).map(lambda sid: age_confidence_map.get(sid, None))
         except Exception:
             age_confidence = df_display["site_id"].map(lambda sid: age_confidence_map.get(str(sid), None))
-        df_display.insert(10, "Age Confidence", age_confidence)
+        df_display.insert(11, "Age Confidence", age_confidence)
 
-        # Insert Process at position 11 (after Age Confidence)
-        df_display.insert(11, "Process", process_links)
+        # Insert Process at position 12 (after Age Confidence)
+        df_display.insert(12, "Process", process_links)
 
-        # Insert Feedback at position 12 (after Process)
-        df_display.insert(12, "Feedback", feedback_links)
+        # Insert Feedback at position 13 (after Process)
+        df_display.insert(13, "Feedback", feedback_links)
 
         st.dataframe(
             df_display,
@@ -1054,6 +1103,10 @@ def overview_table(where_sql: str, params: list):
                 "Site Detail": st.column_config.LinkColumn(
                     label="Site Detail",
                     display_text="Site Detail",
+                ),
+                "Site Status": st.column_config.TextColumn(
+                    label="Site Status",
+                    help="Cleanup/remediation status of the site"
                 ),
                 "SFDC Lead": st.column_config.LinkColumn(
                     label="SFDC Lead",
