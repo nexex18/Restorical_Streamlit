@@ -528,7 +528,7 @@ def get_metrics(where_sql: str, params: tuple):  # tuple for hashability
           SELECT so.site_id FROM site_overview so
           LEFT JOIN sites s ON so.site_id = s.site_id
           LEFT JOIN (
-              SELECT site_id, sfdc_opportunity_name, stage
+              SELECT site_id, sfdc_opportunity_name, stage, created_date, close_date
               FROM site_opportunities
               WHERE (site_id, created_date) IN (
                   SELECT site_id, MAX(created_date)
@@ -562,7 +562,7 @@ def contaminant_chart(where_sql: str, params: list):
           SELECT so.site_id FROM site_overview so
           LEFT JOIN sites s ON so.site_id = s.site_id
           LEFT JOIN (
-              SELECT site_id, sfdc_opportunity_name, stage
+              SELECT site_id, sfdc_opportunity_name, stage, created_date, close_date
               FROM site_opportunities
               WHERE (site_id, created_date) IN (
                   SELECT site_id, MAX(created_date)
@@ -598,7 +598,7 @@ def docs_summary(where_sql: str, params: list):
           SELECT so.site_id FROM site_overview so
           LEFT JOIN sites s ON so.site_id = s.site_id
           LEFT JOIN (
-              SELECT site_id, sfdc_opportunity_name, stage
+              SELECT site_id, sfdc_opportunity_name, stage, created_date, close_date
               FROM site_opportunities
               WHERE (site_id, created_date) IN (
                   SELECT site_id, MAX(created_date)
@@ -638,13 +638,60 @@ def overview_table(where_sql: str, params: list):
     # Initialize pagination state
     if 'home_overview_page' not in st.session_state:
         st.session_state.home_overview_page = 1
-    
+
+    # Initialize sort state
+    if 'sort_column' not in st.session_state:
+        st.session_state.sort_column = 'Site ID'
+    if 'sort_direction' not in st.session_state:
+        st.session_state.sort_direction = 'Descending'
+
     # Check if filters have changed and reset to page 1 if they have
     if 'home_filter_hash' not in st.session_state:
         st.session_state.home_filter_hash = filter_hash
     elif st.session_state.home_filter_hash != filter_hash:
         st.session_state.home_filter_hash = filter_hash
         st.session_state.home_overview_page = 1  # Reset to page 1 when filters change
+
+    # Sort controls
+    st.markdown("### Sort Options")
+    sort_col1, sort_col2 = st.columns([2, 1])
+    with sort_col1:
+        sort_column = st.selectbox(
+            "Sort by",
+            options=['Site ID', 'Site Name', 'County', 'Opp Created', 'Opp Close Date'],
+            index=['Site ID', 'Site Name', 'County', 'Opp Created', 'Opp Close Date'].index(st.session_state.sort_column),
+            key='sort_column_select'
+        )
+        if sort_column != st.session_state.sort_column:
+            st.session_state.sort_column = sort_column
+            st.session_state.home_overview_page = 1
+            st.rerun()
+    with sort_col2:
+        sort_direction = st.radio(
+            "Direction",
+            options=['Ascending', 'Descending'],
+            index=['Ascending', 'Descending'].index(st.session_state.sort_direction),
+            key='sort_direction_select',
+            horizontal=True
+        )
+        if sort_direction != st.session_state.sort_direction:
+            st.session_state.sort_direction = sort_direction
+            st.session_state.home_overview_page = 1
+            st.rerun()
+
+    # Map display column names to SQL expressions
+    sort_column_map = {
+        'Site ID': 'CAST(so.site_id AS INTEGER)',
+        'Site Name': 'so.site_name',
+        'County': 's.county',
+        'Opp Created': 'sfo.created_date',
+        'Opp Close Date': 'sfo.close_date'
+    }
+
+    # Build ORDER BY clause
+    sort_sql_column = sort_column_map.get(st.session_state.sort_column, 'CAST(so.site_id AS INTEGER)')
+    sort_sql_direction = 'DESC' if st.session_state.sort_direction == 'Descending' else 'ASC'
+    order_by_clause = f"ORDER BY {sort_sql_column} {sort_sql_direction}"
     
     # Get total count of sites
     total_count_df = query_df(
@@ -677,12 +724,12 @@ def overview_table(where_sql: str, params: list):
         f"""
         SELECT so.site_id, s.county, so.site_name, so.site_address, so.total_documents, so.total_contaminants,
                so.has_documents, so.has_contaminants, so.scrape_status, so.status_icon, s.sfdc_lead_url, ss.site_status,
-               sfo.sfdc_opportunity_name, sfo.stage AS sfdc_opportunity_stage
+               sfo.sfdc_opportunity_name, sfo.stage AS sfdc_opportunity_stage, sfo.created_date AS opp_created_date, sfo.close_date AS opp_close_date
         FROM site_overview so
         LEFT JOIN sites s ON so.site_id = s.site_id
         LEFT JOIN site_summary ss ON so.site_id = ss.site_id
         LEFT JOIN (
-            SELECT site_id, sfdc_opportunity_name, stage
+            SELECT site_id, sfdc_opportunity_name, stage, created_date, close_date
             FROM site_opportunities
             WHERE (site_id, created_date) IN (
                 SELECT site_id, MAX(created_date)
@@ -691,7 +738,7 @@ def overview_table(where_sql: str, params: list):
             )
         ) sfo ON so.site_id = sfo.site_id
         {where_sql}
-        ORDER BY CAST(so.site_id AS INTEGER)
+        {order_by_clause}
         LIMIT {items_per_page}
         OFFSET {offset}
         """,
@@ -729,7 +776,7 @@ def overview_table(where_sql: str, params: list):
                         LEFT JOIN sites s ON so.site_id = s.site_id
                         LEFT JOIN site_summary ss ON so.site_id = ss.site_id
                         LEFT JOIN (
-                            SELECT site_id, sfdc_opportunity_name, stage
+                            SELECT site_id, sfdc_opportunity_name, stage, created_date, close_date
                             FROM site_opportunities
                             WHERE (site_id, created_date) IN (
                                 SELECT site_id, MAX(created_date)
@@ -782,7 +829,7 @@ def overview_table(where_sql: str, params: list):
               SELECT so.site_id FROM site_overview so
               LEFT JOIN sites s ON so.site_id = s.site_id
               LEFT JOIN (
-                  SELECT site_id, sfdc_opportunity_name, stage
+                  SELECT site_id, sfdc_opportunity_name, stage, created_date, close_date
                   FROM site_opportunities
                   WHERE (site_id, created_date) IN (
                       SELECT site_id, MAX(created_date)
@@ -822,7 +869,7 @@ def overview_table(where_sql: str, params: list):
               SELECT so.site_id FROM site_overview so
               LEFT JOIN sites s ON so.site_id = s.site_id
               LEFT JOIN (
-                  SELECT site_id, sfdc_opportunity_name, stage
+                  SELECT site_id, sfdc_opportunity_name, stage, created_date, close_date
                   FROM site_opportunities
                   WHERE (site_id, created_date) IN (
                       SELECT site_id, MAX(created_date)
@@ -880,7 +927,7 @@ def overview_table(where_sql: str, params: list):
               SELECT so.site_id FROM site_overview so
               LEFT JOIN sites s ON so.site_id = s.site_id
               LEFT JOIN (
-                  SELECT site_id, sfdc_opportunity_name, stage
+                  SELECT site_id, sfdc_opportunity_name, stage, created_date, close_date
                   FROM site_opportunities
                   WHERE (site_id, created_date) IN (
                       SELECT site_id, MAX(created_date)
@@ -905,6 +952,10 @@ def overview_table(where_sql: str, params: list):
         except Exception:
             detail_col = df["site_id"].apply(lambda sid: f"{URL_PREFIX}/Site_Detail?site_id={sid}")
         df_display = df.copy()
+
+        # Convert site_id to numeric for proper sorting
+        if "site_id" in df_display.columns:
+            df_display["site_id"] = pd.to_numeric(df_display["site_id"], errors='coerce')
 
         # Create SFDC Lead link column (will be inserted later)
         # Note: Streamlit's LinkColumn shows the full URL since it doesn't support per-row display text
@@ -933,7 +984,7 @@ def overview_table(where_sql: str, params: list):
               SELECT so.site_id FROM site_overview so
               LEFT JOIN sites s ON so.site_id = s.site_id
               LEFT JOIN (
-                  SELECT site_id, sfdc_opportunity_name, stage
+                  SELECT site_id, sfdc_opportunity_name, stage, created_date, close_date
                   FROM site_opportunities
                   WHERE (site_id, created_date) IN (
                       SELECT site_id, MAX(created_date)
@@ -959,7 +1010,7 @@ def overview_table(where_sql: str, params: list):
               SELECT so.site_id FROM site_overview so
               LEFT JOIN sites s ON so.site_id = s.site_id
               LEFT JOIN (
-                  SELECT site_id, sfdc_opportunity_name, stage
+                  SELECT site_id, sfdc_opportunity_name, stage, created_date, close_date
                   FROM site_opportunities
                   WHERE (site_id, created_date) IN (
                       SELECT site_id, MAX(created_date)
@@ -1004,7 +1055,7 @@ def overview_table(where_sql: str, params: list):
               SELECT so.site_id FROM site_overview so
               LEFT JOIN sites s ON so.site_id = s.site_id
               LEFT JOIN (
-                  SELECT site_id, sfdc_opportunity_name, stage
+                  SELECT site_id, sfdc_opportunity_name, stage, created_date, close_date
                   FROM site_opportunities
                   WHERE (site_id, created_date) IN (
                       SELECT site_id, MAX(created_date)
@@ -1191,7 +1242,50 @@ def overview_table(where_sql: str, params: list):
         df_display.insert(4, "SFDC Lead", lead_id_links)
 
         # site_name is now at position 5, site_address at position 6
-        # Insert SFDC Opportunity at position 7 (after site_address) with color-coded indicator
+        # We'll insert SFDC Opportunity later, after Feedback
+
+        # Insert Historical Use at position 7 (after site_address)
+        try:
+            historical_use = df_display["site_id"].astype(str).map(lambda sid: historical_use_map.get(sid, None))
+        except Exception:
+            historical_use = df_display["site_id"].map(lambda sid: historical_use_map.get(str(sid), None))
+        df_display.insert(7, "Historical Use", historical_use)
+
+        # Insert Last Processed at position 8 (after Historical Use)
+        try:
+            last_processed = df_display["site_id"].astype(str).map(lambda sid: last_processed_map.get(sid, None))
+        except Exception:
+            last_processed = df_display["site_id"].map(lambda sid: last_processed_map.get(str(sid), None))
+        df_display.insert(8, "Last Processed", last_processed)
+
+        # Insert Final Score at position 9 (after Last Processed)
+        try:
+            overall_scores = df_display["site_id"].astype(str).map(lambda sid: score_map.get(sid, None))
+        except Exception:
+            overall_scores = df_display["site_id"].map(lambda sid: score_map.get(str(sid), None))
+        df_display.insert(9, "Final Score", overall_scores)
+
+        # Insert Age Check at position 10 (after Final Score)
+        try:
+            age_check = df_display["site_id"].astype(str).map(lambda sid: age_check_map.get(sid, None))
+        except Exception:
+            age_check = df_display["site_id"].map(lambda sid: age_check_map.get(str(sid), None))
+        df_display.insert(10, "Age Check", age_check)
+
+        # Insert Age Confidence at position 11 (after Age Check)
+        try:
+            age_confidence = df_display["site_id"].astype(str).map(lambda sid: age_confidence_map.get(sid, None))
+        except Exception:
+            age_confidence = df_display["site_id"].map(lambda sid: age_confidence_map.get(str(sid), None))
+        df_display.insert(11, "Age Confidence", age_confidence)
+
+        # Insert Process at position 12 (after Age Confidence)
+        df_display.insert(12, "Process", process_links)
+
+        # Insert Feedback at position 13 (after Process)
+        df_display.insert(13, "Feedback", feedback_links)
+
+        # Insert SFDC Opportunity at position 14 (after Feedback) with color-coded indicator
         if "sfdc_opportunity_name" in df_display.columns:
             # Function to add color-coded indicator based on stage
             def add_opportunity_indicator(row):
@@ -1211,48 +1305,17 @@ def overview_table(where_sql: str, params: list):
             df_display.pop("sfdc_opportunity_name")
             if "sfdc_opportunity_stage" in df_display.columns:
                 df_display.pop("sfdc_opportunity_stage")
-            df_display.insert(7, "SFDC Opportunity", sfdc_opp_col)
+            df_display.insert(14, "SFDC Opportunity", sfdc_opp_col)
 
-        # Insert Historical Use at position 8 (after SFDC Opportunity)
-        try:
-            historical_use = df_display["site_id"].astype(str).map(lambda sid: historical_use_map.get(sid, None))
-        except Exception:
-            historical_use = df_display["site_id"].map(lambda sid: historical_use_map.get(str(sid), None))
-        df_display.insert(8, "Historical Use", historical_use)
+        # Insert Opp Created at position 15 (after SFDC Opportunity)
+        if "opp_created_date" in df_display.columns:
+            opp_created_col = pd.to_datetime(df_display.pop("opp_created_date"), errors='coerce')
+            df_display.insert(15, "Opp Created", opp_created_col)
 
-        # Insert Last Processed at position 9 (after Historical Use)
-        try:
-            last_processed = df_display["site_id"].astype(str).map(lambda sid: last_processed_map.get(sid, None))
-        except Exception:
-            last_processed = df_display["site_id"].map(lambda sid: last_processed_map.get(str(sid), None))
-        df_display.insert(9, "Last Processed", last_processed)
-
-        # Insert Final Score at position 10 (after Last Processed)
-        try:
-            overall_scores = df_display["site_id"].astype(str).map(lambda sid: score_map.get(sid, None))
-        except Exception:
-            overall_scores = df_display["site_id"].map(lambda sid: score_map.get(str(sid), None))
-        df_display.insert(10, "Final Score", overall_scores)
-
-        # Insert Age Check at position 11 (after Final Score)
-        try:
-            age_check = df_display["site_id"].astype(str).map(lambda sid: age_check_map.get(sid, None))
-        except Exception:
-            age_check = df_display["site_id"].map(lambda sid: age_check_map.get(str(sid), None))
-        df_display.insert(11, "Age Check", age_check)
-
-        # Insert Age Confidence at position 12 (after Age Check)
-        try:
-            age_confidence = df_display["site_id"].astype(str).map(lambda sid: age_confidence_map.get(sid, None))
-        except Exception:
-            age_confidence = df_display["site_id"].map(lambda sid: age_confidence_map.get(str(sid), None))
-        df_display.insert(12, "Age Confidence", age_confidence)
-
-        # Insert Process at position 13 (after Age Confidence)
-        df_display.insert(13, "Process", process_links)
-
-        # Insert Feedback at position 14 (after Process)
-        df_display.insert(14, "Feedback", feedback_links)
+        # Insert Opp Close Date at position 16 (after Opp Created)
+        if "opp_close_date" in df_display.columns:
+            opp_close_col = pd.to_datetime(df_display.pop("opp_close_date"), errors='coerce')
+            df_display.insert(16, "Opp Close Date", opp_close_col)
 
         st.dataframe(
             df_display,
@@ -1379,7 +1442,7 @@ def main():
           SELECT so.site_id FROM site_overview so
           LEFT JOIN sites s ON so.site_id = s.site_id
           LEFT JOIN (
-              SELECT site_id, sfdc_opportunity_name, stage
+              SELECT site_id, sfdc_opportunity_name, stage, created_date, close_date
               FROM site_opportunities
               WHERE (site_id, created_date) IN (
                   SELECT site_id, MAX(created_date)
@@ -1402,7 +1465,7 @@ def main():
           SELECT so.site_id FROM site_overview so
           LEFT JOIN sites s ON so.site_id = s.site_id
           LEFT JOIN (
-              SELECT site_id, sfdc_opportunity_name, stage
+              SELECT site_id, sfdc_opportunity_name, stage, created_date, close_date
               FROM site_opportunities
               WHERE (site_id, created_date) IN (
                   SELECT site_id, MAX(created_date)
