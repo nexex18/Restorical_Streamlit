@@ -271,12 +271,14 @@ def build_site_filters_ui():
                 )
 
             with sfdc_col2:
-                # Has SFDC Opportunity filter
-                has_sfdc_opportunity = st.checkbox(
-                    "Has SFDC Opp",
-                    value=False,
-                    key="sfdc_opportunity_checkbox",
-                    help="Filter to show only sites with a Salesforce Opportunity"
+                # SFDC Opportunity Stage filter (multiselect)
+                opportunity_stages = st.multiselect(
+                    "SFDC Opp Stage",
+                    options=["All", "Closed Lost", "Closed Won / Signed", "Cold/Discovery Call",
+                             "Contract Review", "Demo/Meeting", "Hold", "Negotiation"],
+                    default=[],
+                    key="sfdc_opportunity_stages",
+                    help="Filter by Salesforce Opportunity stage. Select 'All' to show all opportunities, or select specific stages."
                 )
 
     where, params = [], []
@@ -498,9 +500,22 @@ def build_site_filters_ui():
     if 'has_sfdc_lead' in locals() and has_sfdc_lead:
         where.append("s.sfdc_lead_url IS NOT NULL")
 
-    # Filter by SFDC Opportunity
-    if 'has_sfdc_opportunity' in locals() and has_sfdc_opportunity:
-        where.append("sfo.sfdc_opportunity_name IS NOT NULL")
+    # Filter by SFDC Opportunity Stage
+    if 'opportunity_stages' in locals() and opportunity_stages:
+        if "All" in opportunity_stages:
+            # Show all sites with any opportunity
+            where.append("sfo.sfdc_opportunity_name IS NOT NULL")
+        else:
+            # Map display names to database values
+            stage_mapping = {
+                "Closed Won / Signed": "Opportunity Won/Signed"
+            }
+            db_stages = [stage_mapping.get(stage, stage) for stage in opportunity_stages]
+
+            # Filter by specific stages
+            stage_placeholders = ",".join(["?" for _ in db_stages])
+            where.append(f"sfo.stage IN ({stage_placeholders})")
+            params.extend(db_stages)
 
     where_sql = ("WHERE " + " AND ".join(where)) if where else ""
     return where_sql, params
@@ -513,7 +528,7 @@ def get_metrics(where_sql: str, params: tuple):  # tuple for hashability
           SELECT so.site_id FROM site_overview so
           LEFT JOIN sites s ON so.site_id = s.site_id
           LEFT JOIN (
-              SELECT site_id, sfdc_opportunity_name
+              SELECT site_id, sfdc_opportunity_name, stage
               FROM site_opportunities
               WHERE (site_id, created_date) IN (
                   SELECT site_id, MAX(created_date)
@@ -547,7 +562,7 @@ def contaminant_chart(where_sql: str, params: list):
           SELECT so.site_id FROM site_overview so
           LEFT JOIN sites s ON so.site_id = s.site_id
           LEFT JOIN (
-              SELECT site_id, sfdc_opportunity_name
+              SELECT site_id, sfdc_opportunity_name, stage
               FROM site_opportunities
               WHERE (site_id, created_date) IN (
                   SELECT site_id, MAX(created_date)
@@ -583,7 +598,7 @@ def docs_summary(where_sql: str, params: list):
           SELECT so.site_id FROM site_overview so
           LEFT JOIN sites s ON so.site_id = s.site_id
           LEFT JOIN (
-              SELECT site_id, sfdc_opportunity_name
+              SELECT site_id, sfdc_opportunity_name, stage
               FROM site_opportunities
               WHERE (site_id, created_date) IN (
                   SELECT site_id, MAX(created_date)
@@ -638,7 +653,7 @@ def overview_table(where_sql: str, params: list):
         FROM site_overview so
         LEFT JOIN sites s ON so.site_id = s.site_id
         LEFT JOIN (
-            SELECT site_id, sfdc_opportunity_name
+            SELECT site_id, sfdc_opportunity_name, stage
             FROM site_opportunities
             WHERE (site_id, created_date) IN (
                 SELECT site_id, MAX(created_date)
@@ -662,12 +677,12 @@ def overview_table(where_sql: str, params: list):
         f"""
         SELECT so.site_id, s.county, so.site_name, so.site_address, so.total_documents, so.total_contaminants,
                so.has_documents, so.has_contaminants, so.scrape_status, so.status_icon, s.sfdc_lead_url, ss.site_status,
-               sfo.sfdc_opportunity_name
+               sfo.sfdc_opportunity_name, sfo.stage AS sfdc_opportunity_stage
         FROM site_overview so
         LEFT JOIN sites s ON so.site_id = s.site_id
         LEFT JOIN site_summary ss ON so.site_id = ss.site_id
         LEFT JOIN (
-            SELECT site_id, sfdc_opportunity_name
+            SELECT site_id, sfdc_opportunity_name, stage
             FROM site_opportunities
             WHERE (site_id, created_date) IN (
                 SELECT site_id, MAX(created_date)
@@ -714,7 +729,7 @@ def overview_table(where_sql: str, params: list):
                         LEFT JOIN sites s ON so.site_id = s.site_id
                         LEFT JOIN site_summary ss ON so.site_id = ss.site_id
                         LEFT JOIN (
-                            SELECT site_id, sfdc_opportunity_name
+                            SELECT site_id, sfdc_opportunity_name, stage
                             FROM site_opportunities
                             WHERE (site_id, created_date) IN (
                                 SELECT site_id, MAX(created_date)
@@ -767,7 +782,7 @@ def overview_table(where_sql: str, params: list):
               SELECT so.site_id FROM site_overview so
               LEFT JOIN sites s ON so.site_id = s.site_id
               LEFT JOIN (
-                  SELECT site_id, sfdc_opportunity_name
+                  SELECT site_id, sfdc_opportunity_name, stage
                   FROM site_opportunities
                   WHERE (site_id, created_date) IN (
                       SELECT site_id, MAX(created_date)
@@ -807,7 +822,7 @@ def overview_table(where_sql: str, params: list):
               SELECT so.site_id FROM site_overview so
               LEFT JOIN sites s ON so.site_id = s.site_id
               LEFT JOIN (
-                  SELECT site_id, sfdc_opportunity_name
+                  SELECT site_id, sfdc_opportunity_name, stage
                   FROM site_opportunities
                   WHERE (site_id, created_date) IN (
                       SELECT site_id, MAX(created_date)
@@ -865,7 +880,7 @@ def overview_table(where_sql: str, params: list):
               SELECT so.site_id FROM site_overview so
               LEFT JOIN sites s ON so.site_id = s.site_id
               LEFT JOIN (
-                  SELECT site_id, sfdc_opportunity_name
+                  SELECT site_id, sfdc_opportunity_name, stage
                   FROM site_opportunities
                   WHERE (site_id, created_date) IN (
                       SELECT site_id, MAX(created_date)
@@ -918,7 +933,7 @@ def overview_table(where_sql: str, params: list):
               SELECT so.site_id FROM site_overview so
               LEFT JOIN sites s ON so.site_id = s.site_id
               LEFT JOIN (
-                  SELECT site_id, sfdc_opportunity_name
+                  SELECT site_id, sfdc_opportunity_name, stage
                   FROM site_opportunities
                   WHERE (site_id, created_date) IN (
                       SELECT site_id, MAX(created_date)
@@ -944,7 +959,7 @@ def overview_table(where_sql: str, params: list):
               SELECT so.site_id FROM site_overview so
               LEFT JOIN sites s ON so.site_id = s.site_id
               LEFT JOIN (
-                  SELECT site_id, sfdc_opportunity_name
+                  SELECT site_id, sfdc_opportunity_name, stage
                   FROM site_opportunities
                   WHERE (site_id, created_date) IN (
                       SELECT site_id, MAX(created_date)
@@ -989,7 +1004,7 @@ def overview_table(where_sql: str, params: list):
               SELECT so.site_id FROM site_overview so
               LEFT JOIN sites s ON so.site_id = s.site_id
               LEFT JOIN (
-                  SELECT site_id, sfdc_opportunity_name
+                  SELECT site_id, sfdc_opportunity_name, stage
                   FROM site_opportunities
                   WHERE (site_id, created_date) IN (
                       SELECT site_id, MAX(created_date)
@@ -1176,11 +1191,26 @@ def overview_table(where_sql: str, params: list):
         df_display.insert(4, "SFDC Lead", lead_id_links)
 
         # site_name is now at position 5, site_address at position 6
-        # Insert SFDC Opportunity at position 7 (after site_address) with green indicator
+        # Insert SFDC Opportunity at position 7 (after site_address) with color-coded indicator
         if "sfdc_opportunity_name" in df_display.columns:
-            sfdc_opp_col = df_display.pop("sfdc_opportunity_name")
-            # Add green circle indicator for rows with opportunities
-            sfdc_opp_col = sfdc_opp_col.apply(lambda x: f"🟢 {x}" if pd.notna(x) and str(x).strip() != "" else x)
+            # Function to add color-coded indicator based on stage
+            def add_opportunity_indicator(row):
+                opp_name = row['sfdc_opportunity_name']
+                stage = row.get('sfdc_opportunity_stage', '')
+
+                if pd.notna(opp_name) and str(opp_name).strip() != "":
+                    if stage == "Closed Lost":
+                        return f"🔴 {opp_name}"
+                    elif stage == "Opportunity Won/Signed":
+                        return f"🟢 {opp_name}"
+                    else:
+                        return f"🟡 {opp_name}"
+                return opp_name
+
+            sfdc_opp_col = df_display.apply(add_opportunity_indicator, axis=1)
+            df_display.pop("sfdc_opportunity_name")
+            if "sfdc_opportunity_stage" in df_display.columns:
+                df_display.pop("sfdc_opportunity_stage")
             df_display.insert(7, "SFDC Opportunity", sfdc_opp_col)
 
         # Insert Historical Use at position 8 (after SFDC Opportunity)
@@ -1349,7 +1379,7 @@ def main():
           SELECT so.site_id FROM site_overview so
           LEFT JOIN sites s ON so.site_id = s.site_id
           LEFT JOIN (
-              SELECT site_id, sfdc_opportunity_name
+              SELECT site_id, sfdc_opportunity_name, stage
               FROM site_opportunities
               WHERE (site_id, created_date) IN (
                   SELECT site_id, MAX(created_date)
@@ -1372,7 +1402,7 @@ def main():
           SELECT so.site_id FROM site_overview so
           LEFT JOIN sites s ON so.site_id = s.site_id
           LEFT JOIN (
-              SELECT site_id, sfdc_opportunity_name
+              SELECT site_id, sfdc_opportunity_name, stage
               FROM site_opportunities
               WHERE (site_id, created_date) IN (
                   SELECT site_id, MAX(created_date)
