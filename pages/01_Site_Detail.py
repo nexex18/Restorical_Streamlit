@@ -935,46 +935,45 @@ def run():
     st.title("Site Detail 🧭")
     st.caption("A single-page deep-dive into a site: overview, narratives, documents, qualifications, contaminants, and contacts.")
 
+    # Get valid site IDs for validation
     opts = site_options()
     if not opts:
         st.info("No sites found.")
         st.stop()
 
-    labels = [label for label, _ in opts]
-    label_to_id = {label: sid for label, sid in opts}
-    # Try to read site_id from query params for deep-link support
-    qp_site_id = None
-    try:
+    valid_site_ids = {str(sid) for _, sid in opts}
+
+    # Initialize site_id in session state from query params (first load only)
+    if "site_id" not in st.session_state:
         qp_site_id = st.query_params.get("site_id")
-    except Exception:
-        try:
-            qpexp = st.experimental_get_query_params()
-            v = qpexp.get("site_id")
-            qp_site_id = v[0] if isinstance(v, list) else v
-        except Exception:
-            qp_site_id = None
+        st.session_state.site_id = str(qp_site_id) if qp_site_id else None
 
-    # Compute default index based on query param if present
-    id_list = [sid for _, sid in opts]
-    default_index = 0
-    if qp_site_id is not None:
-        qp_site_id_str = str(qp_site_id)
-        for i, sid in enumerate(id_list):
-            if str(sid) == qp_site_id_str:
-                default_index = i
-                break
+    # Site ID text input
+    col1, col2 = st.columns([1, 3])
+    with col1:
+        site_id_input = st.text_input(
+            "Site ID",
+            value=st.session_state.site_id or "",
+            placeholder="Enter site ID",
+        )
 
-    selected_label = st.selectbox("Select Site", labels, index=default_index)
-    site_id = label_to_id[selected_label]
+    # Validate and update session state when input changes
+    if site_id_input:
+        if site_id_input != st.session_state.site_id:
+            if site_id_input in valid_site_ids:
+                st.session_state.site_id = site_id_input
+                st.query_params["site_id"] = site_id_input
+                st.rerun()
+            else:
+                st.error(f"Site ID {site_id_input} not found")
+                st.stop()
+        site_id = st.session_state.site_id
+    else:
+        st.info("Enter a Site ID above or navigate from Site Search.")
+        st.stop()
 
-    # Persist selected site to query params to keep URL shareable
-    try:
-        st.query_params["site_id"] = str(site_id)
-    except Exception:
-        try:
-            st.experimental_set_query_params(site_id=str(site_id))
-        except Exception:
-            pass
+    # Sync query params for URL shareability
+    st.query_params["site_id"] = str(site_id)
 
     tabs = st.tabs(["Overview", "SFDC Lead", "Narratives", "Documents", "Qualifications", "Contaminants", "Contacts", "Ownership History"])
 
