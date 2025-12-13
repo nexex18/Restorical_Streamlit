@@ -258,7 +258,7 @@ def build_site_filters_ui():
                     for _, row in selected_info.iterrows():
                         st.caption(f"📦 **{row['batch_name']}**: {row['batch_description']} ({row['total_sites']} sites)")
 
-            # SFDC filters in two columns
+            # SFDC and Customer filters in two columns
             sfdc_col1, sfdc_col2 = st.columns(2)
 
             with sfdc_col1:
@@ -722,12 +722,13 @@ def overview_table(where_sql: str, params: list):
     # Query with pagination
     df = query_df(
         f"""
-        SELECT so.site_id, s.county, so.site_name, so.site_address, so.total_documents, so.total_contaminants,
-               so.has_documents, so.has_contaminants, so.scrape_status, so.status_icon, s.sfdc_lead_url, ss.site_status,
-               sfo.sfdc_opportunity_name, sfo.stage AS sfdc_opportunity_stage, sfo.created_date AS opp_created_date, sfo.close_date AS opp_close_date
+        SELECT so.site_id, s.county, so.site_name, so.site_address, s.sfdc_lead_url, ss.site_status,
+               sfo.sfdc_opportunity_name, sfo.stage AS sfdc_opportunity_stage, sfo.created_date AS opp_created_date, sfo.close_date AS opp_close_date,
+               bcm.box_case_name
         FROM site_overview so
         LEFT JOIN sites s ON so.site_id = s.site_id
         LEFT JOIN site_summary ss ON so.site_id = ss.site_id
+        LEFT JOIN box_case_matches bcm ON so.site_id = bcm.site_id
         LEFT JOIN (
             SELECT site_id, sfdc_opportunity_name, stage, created_date, close_date
             FROM site_opportunities
@@ -769,12 +770,12 @@ def overview_table(where_sql: str, params: list):
                     # Query ALL data without pagination
                     all_df = query_df(
                         f"""
-                        SELECT so.site_id, s.county, so.site_name, so.site_address, so.total_documents, so.total_contaminants,
-                               so.has_documents, so.has_contaminants, so.scrape_status, so.status_icon, s.sfdc_lead_url, ss.site_status,
-                               sfo.sfdc_opportunity_name
+                        SELECT so.site_id, s.county, so.site_name, so.site_address, s.sfdc_lead_url, ss.site_status,
+                               sfo.sfdc_opportunity_name, bcm.box_case_name
                         FROM site_overview so
                         LEFT JOIN sites s ON so.site_id = s.site_id
                         LEFT JOIN site_summary ss ON so.site_id = ss.site_id
+                        LEFT JOIN box_case_matches bcm ON so.site_id = bcm.site_id
                         LEFT JOIN (
                             SELECT site_id, sfdc_opportunity_name, stage, created_date, close_date
                             FROM site_opportunities
@@ -1241,51 +1242,56 @@ def overview_table(where_sql: str, params: list):
         # Insert SFDC Lead at position 4
         df_display.insert(4, "SFDC Lead", lead_id_links)
 
-        # site_name is now at position 5, site_address at position 6
+        # site_name is now at position 6, site_address at position 7
         # We'll insert SFDC Opportunity later, after Feedback
 
-        # Insert Historical Use at position 7 (after site_address)
+        # Insert Historical Use at position 8 (after site_address)
         try:
             historical_use = df_display["site_id"].astype(str).map(lambda sid: historical_use_map.get(sid, None))
         except Exception:
             historical_use = df_display["site_id"].map(lambda sid: historical_use_map.get(str(sid), None))
-        df_display.insert(7, "Historical Use", historical_use)
+        df_display.insert(8, "Historical Use", historical_use)
 
-        # Insert Last Processed at position 8 (after Historical Use)
+        # Insert Last Processed at position 9 (after Historical Use)
         try:
             last_processed = df_display["site_id"].astype(str).map(lambda sid: last_processed_map.get(sid, None))
         except Exception:
             last_processed = df_display["site_id"].map(lambda sid: last_processed_map.get(str(sid), None))
-        df_display.insert(8, "Last Processed", last_processed)
+        df_display.insert(9, "Last Processed", last_processed)
 
-        # Insert Final Score at position 9 (after Last Processed)
+        # Insert Final Score at position 10 (after Last Processed)
         try:
             overall_scores = df_display["site_id"].astype(str).map(lambda sid: score_map.get(sid, None))
         except Exception:
             overall_scores = df_display["site_id"].map(lambda sid: score_map.get(str(sid), None))
-        df_display.insert(9, "Final Score", overall_scores)
+        df_display.insert(10, "Final Score", overall_scores)
 
-        # Insert Age Check at position 10 (after Final Score)
+        # Insert Age Check at position 11 (after Final Score)
         try:
             age_check = df_display["site_id"].astype(str).map(lambda sid: age_check_map.get(sid, None))
         except Exception:
             age_check = df_display["site_id"].map(lambda sid: age_check_map.get(str(sid), None))
-        df_display.insert(10, "Age Check", age_check)
+        df_display.insert(11, "Age Check", age_check)
 
-        # Insert Age Confidence at position 11 (after Age Check)
+        # Insert Age Confidence at position 12 (after Age Check)
         try:
             age_confidence = df_display["site_id"].astype(str).map(lambda sid: age_confidence_map.get(sid, None))
         except Exception:
             age_confidence = df_display["site_id"].map(lambda sid: age_confidence_map.get(str(sid), None))
-        df_display.insert(11, "Age Confidence", age_confidence)
+        df_display.insert(12, "Age Confidence", age_confidence)
 
-        # Insert Process at position 12 (after Age Confidence)
-        df_display.insert(12, "Process", process_links)
+        # Insert Process at position 13 (after Age Confidence)
+        df_display.insert(13, "Process", process_links)
 
-        # Insert Feedback at position 13 (after Process)
-        df_display.insert(13, "Feedback", feedback_links)
+        # Insert Feedback at position 14 (after Process)
+        df_display.insert(14, "Feedback", feedback_links)
 
-        # Insert SFDC Opportunity at position 14 (after Feedback) with color-coded indicator
+        # Insert Box Customer at position 15 (after Feedback, before SFDC Opportunity)
+        if "box_case_name" in df_display.columns:
+            box_customer_col = df_display.pop("box_case_name")
+            df_display.insert(15, "Box Customer", box_customer_col)
+
+        # Insert SFDC Opportunity at position 16 (after Box Customer) with color-coded indicator
         if "sfdc_opportunity_name" in df_display.columns:
             # Function to add color-coded indicator based on stage
             def add_opportunity_indicator(row):
@@ -1305,17 +1311,17 @@ def overview_table(where_sql: str, params: list):
             df_display.pop("sfdc_opportunity_name")
             if "sfdc_opportunity_stage" in df_display.columns:
                 df_display.pop("sfdc_opportunity_stage")
-            df_display.insert(14, "SFDC Opportunity", sfdc_opp_col)
+            df_display.insert(16, "SFDC Opportunity", sfdc_opp_col)
 
-        # Insert Opp Created at position 15 (after SFDC Opportunity)
+        # Insert Opp Created at position 17 (after SFDC Opportunity)
         if "opp_created_date" in df_display.columns:
             opp_created_col = pd.to_datetime(df_display.pop("opp_created_date"), errors='coerce')
-            df_display.insert(15, "Opp Created", opp_created_col)
+            df_display.insert(17, "Opp Created", opp_created_col)
 
-        # Insert Opp Close Date at position 16 (after Opp Created)
+        # Insert Opp Close Date at position 18 (after Opp Created)
         if "opp_close_date" in df_display.columns:
             opp_close_col = pd.to_datetime(df_display.pop("opp_close_date"), errors='coerce')
-            df_display.insert(16, "Opp Close Date", opp_close_col)
+            df_display.insert(18, "Opp Close Date", opp_close_col)
 
         st.dataframe(
             df_display,
@@ -1338,6 +1344,10 @@ def overview_table(where_sql: str, params: list):
                 "SFDC Lead": st.column_config.LinkColumn(
                     label="SFDC Lead",
                     help="Click to open Salesforce Lead record"
+                ),
+                "Box Customer": st.column_config.TextColumn(
+                    label="Box Customer",
+                    help="Matched Box case/customer name from existing client database"
                 ),
                 "SFDC Opportunity": st.column_config.TextColumn(
                     label="SFDC Opportunity",
