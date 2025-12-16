@@ -53,6 +53,14 @@ def build_filters_ui():
             help="Filter customer dropdown to show only customers with this many sites"
         )
 
+        # Exact match checkbox
+        exact_match_only = st.checkbox(
+            "Exact Match Only",
+            value=False,
+            key="exact_match_checkbox",
+            help="Show only sites where organization name exactly matches Box customer name"
+        )
+
         # Second row: Customer Name and Historical Use Category
         col1, col2 = st.columns(2)
 
@@ -104,6 +112,10 @@ def build_filters_ui():
         HAVING COUNT(*) BETWEEN ? AND ?
     )""")
     params.extend([int(sites_per_customer_range[0]), int(sites_per_customer_range[1])])
+
+    # Filter for exact matches only if checkbox is checked
+    if exact_match_only:
+        where.append("LOWER(TRIM(bcm.matched_via_org)) = LOWER(TRIM(bcm.box_case_name))")
 
     # Filter by selected customers
     if selected_customers:
